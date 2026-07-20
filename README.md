@@ -44,6 +44,12 @@ Four stages, tracked against the canon clock:
 
 Best run (score/time/shards) is kept in localStorage.
 
+## Pitch deck
+
+The `pitch/` folder holds a cinematic pitch for the universe: `chromopunk_pitch.html`
+(interactive — double-click to open) and `chromopunk_pitch.pptx` (editable slides with speaker
+notes), plus a README covering presentation, printing, and open `[TBD]` fields.
+
 ## Credits
 
 Fan work set in the *Chromopunk: Resonators* continuity, itself an unofficial alternate continuity inspired by Mike Pondsmith's Cyberpunk universe. All original characters, places, and terminology belong to their respective creators.
