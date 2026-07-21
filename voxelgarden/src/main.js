@@ -1,5 +1,5 @@
 // Voxelgarden — boot + game loop.
-// Phase 5: day/night sky, clouds, synthesized audio, underwater FX.
+// Phase 7: mobs, combat, health/damage, death & respawn.
 import * as THREE from 'three';
 import { buildAtlasCanvas, buildWaterCanvas } from './world/atlas.js';
 import { World, RENDER_DIST } from './world/world.js';
@@ -18,6 +18,9 @@ import { Furnaces } from './items/furnace.js';
 import { buildIcons } from './ui/icons.js';
 import { Hud } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
+import { MobManager } from './mobs/spawner.js';
+import { DeathScreen } from './ui/death.js';
+import { Particles } from './env/particles.js';
 
 const app = document.getElementById('app');
 const hud = document.getElementById('hud');
@@ -74,6 +77,22 @@ const waterMat = new THREE.MeshBasicMaterial({
   depthWrite: false, side: THREE.DoubleSide,
 });
 
+// representative colors per block for break-burst particles
+const BREAK_COLORS = {
+  [B.GRASS]: [[0.42, 0.77, 0.32], [0.34, 0.66, 0.25], [0.66, 0.48, 0.31]],
+  [B.DIRT]: [[0.66, 0.48, 0.31], [0.54, 0.38, 0.25]],
+  [B.STONE]: [[0.6, 0.63, 0.66], [0.5, 0.53, 0.56]],
+  [B.COBBLE]: [[0.55, 0.58, 0.6], [0.43, 0.46, 0.49]],
+  [B.SAND]: [[0.93, 0.85, 0.63], [0.85, 0.76, 0.52]],
+  [B.LOG]: [[0.48, 0.35, 0.23], [0.55, 0.42, 0.28]],
+  [B.PLANKS]: [[0.79, 0.63, 0.42], [0.71, 0.55, 0.33]],
+  [B.LEAVES]: [[0.31, 0.62, 0.31], [0.24, 0.51, 0.24]],
+  [B.SNOW]: [[0.96, 0.97, 1.0], [0.87, 0.91, 0.96]],
+  [B.CACTUS]: [[0.25, 0.56, 0.31], [0.18, 0.45, 0.25]],
+};
+const DEFAULT_BREAK = [[0.6, 0.6, 0.6], [0.45, 0.45, 0.45]];
+function breakColors(id) { return BREAK_COLORS[id] || DEFAULT_BREAK; }
+
 // ---- world & player ----
 const seed = new URLSearchParams(location.search).get('seed') || 'voxelgarden';
 const world = new World(scene, solidMat, waterMat, seed);
@@ -97,6 +116,22 @@ let spawnSettled = false;
 const sky = new Sky(scene);
 const audio = new AudioSys();
 const underwaterFX = new UnderwaterFX(hud);
+const particles = new Particles(scene);
+
+// red damage flash overlay
+const flashEl = document.createElement('div');
+flashEl.style.cssText = `position:absolute;inset:0;pointer-events:none;z-index:8;
+  background:radial-gradient(ellipse at center, rgba(160,10,8,0) 40%, rgba(160,10,8,.5) 100%);
+  opacity:0;transition:opacity .35s;`;
+hud.appendChild(flashEl);
+function damageFlash() {
+  flashEl.style.transition = 'none';
+  flashEl.style.opacity = '1';
+  requestAnimationFrame(() => {
+    flashEl.style.transition = 'opacity .4s';
+    flashEl.style.opacity = '0';
+  });
+}
 
 const controls = new Controls(renderer.domElement);
 renderer.domElement.addEventListener('click', () => { controls.lock(); audio.ensure(); });
@@ -132,6 +167,7 @@ interact.speedMultiplier = (blockId) => {
 
 interact.onBreak = (x, y, z, id) => {
   audio.breakBlock(blockFamily(BLOCKS[id].name));
+  particles.burstBlock(x, y, z, breakColors(id));
   if (id === B.FURNACE) {
     for (const s of furnaces.breakAt(x, y, z)) drops.spawn(x + 0.5, y + 0.3, z + 0.5, s.id, s.count);
   }
@@ -156,6 +192,57 @@ interact.onUseBlock = (x, y, z, id) => {
   if (id === B.FURNACE) { screens.open('furnace', [x, y, z]); return true; }
   return false;
 };
+
+// ---- mobs & combat ----
+const mobs = new MobManager(scene, world);
+mobs.onPoof = (x, y, z, kind) => {
+  particles.burstPoof(x, y, z, kind);
+  audio.poof();
+};
+// reject placing a block that would intersect a mob
+interact.entityAt = (minX, minY, minZ, maxX, maxY, maxZ) =>
+  mobs.anyIntersecting(minX, minY, minZ, maxX, maxY, maxZ);
+
+const _atkOrigin = new THREE.Vector3();
+const _atkDir = new THREE.Vector3();
+let attackCooldown = 0;
+interact.onAttack = () => {
+  if (attackCooldown > 0 || screens.isOpen) return false;
+  camera.getWorldDirection(_atkDir);
+  _atkOrigin.copy(camera.position);
+  const mob = mobs.attackFrom(_atkOrigin, _atkDir, 4);
+  if (!mob) return false;
+  attackCooldown = 0.4;
+  const held = inventory.selectedItem();
+  const dmg = held && held.tool === 'sword' ? held.damage : 1;
+  mob.hurt(dmg, { x: _atkDir.x, z: _atkDir.z });
+  particles.burstHit(mob.pos.x, mob.pos.y + mob.height * 0.6, mob.pos.z);
+  audio.thump();
+  return true;
+};
+
+// ---- player damage plumbing ----
+player.onFall = (blocks) => {
+  const halfHearts = Math.floor(blocks) - 3;
+  if (halfHearts > 0) { player.damage(halfHearts); audio.hurt(); }
+};
+player.onDamaged = () => { audio.hurt(); damageFlash(); };
+const deathScreen = new DeathScreen(hud, () => respawn());
+player.onDeath = () => {
+  drops.spawnInventory(inventory, player.pos.x, player.pos.y + 0.6, player.pos.z);
+  hudUI.render();
+  audio.death();
+  controls.unlock();
+  controls.enabled = false;
+  if (screens.isOpen) screens.close();
+  deathScreen.show();
+};
+function respawn() {
+  player.respawn();
+  deathScreen.hide();
+  controls.enabled = true;
+  controls.lock();
+}
 
 function selectSlot(i) {
   inventory.selected = i;
@@ -248,11 +335,19 @@ function tick(now) {
   camera.fov += (targetFov - camera.fov) * Math.min(1, 8 * dt);
   camera.updateProjectionMatrix();
 
+  attackCooldown = Math.max(0, attackCooldown - dt);
+  player.updateVitals(dt);
+
   interact.update(dt);
   const t2 = mark(); perf.interact += t2 - t1;
   world.update(player.pos.x, player.pos.z);
   drops.update(dt, player, inventory, () => audio.pickup());
   furnaces.update(dt, () => audio.smeltPop());
+  mobs.update(dt, {
+    player, sky, tint: sky.tint,
+    damagePlayer: (amt, dir) => player.damage(amt, dir),
+  });
+  particles.update(dt);
   screens.update(dt);
   hudUI.updateVitals(player);
   const t3 = mark(); perf.world += t3 - t2;
@@ -266,7 +361,10 @@ function tick(now) {
     audio.setUnderwater(player.headInWater);
     wasUnderwater = player.headInWater;
   }
-  if (player.inWater && !wasInWater && player.vel.y < -3) audio.splash();
+  if (player.inWater && !wasInWater && player.vel.y < -3) {
+    audio.splash();
+    particles.splash(player.pos.x, Math.floor(player.pos.y) + 1, player.pos.z);
+  }
   wasInWater = player.inWater;
   audio.update(dt, { nightness: sky.nightness, underwater: player.headInWater });
 
@@ -295,4 +393,4 @@ function tick(now) {
 requestAnimationFrame(tick);
 
 // debug/testing handle
-window.__vg = { camera, world, controls, player, interact, sky, audio, renderer, tintUniform, solidMat, inventory, drops, furnaces, screens };
+window.__vg = { camera, world, controls, player, interact, sky, audio, renderer, tintUniform, solidMat, inventory, drops, furnaces, screens, mobs, particles };

@@ -127,3 +127,28 @@ Running log of decisions made during development, newest at the bottom.
   objects, not id strings — matchRecipe now gets a mapped id grid.
 - Tests: crafting matcher unit-tested in Node (13 cases incl. mirrored shapes);
   browser test crafts through real DOM clicks, smelts, checks tier gating + pickup.
+
+## Phase 7 — Mobs, combat, health, death
+
+- **Mob bodies** are Three box groups (no models): puffs = round fluffy body + head +
+  4 stubby legs in a random pastel; shamblers = indigo humanoid with fullbright yellow
+  eyes (eyes/lanterns use `noTint` materials so night lighting doesn't dim them).
+- **Shared physics:** mobs reuse `stepEntity` from the player's collision module.
+  Steering is velocity-approach with auto-jump when a 1-block obstacle sits directly
+  ahead and there's headroom.
+- **Combat:** LMB attacks via mob-AABB ray test (mob nearer than the block target wins,
+  reach 4); 0.4s cooldown; hand=1, sword=4/5/6/7. Hits flash red, knock back + up,
+  thump + spark particles. Mobs shrink-fade on death.
+- **Damage plumbing** (all half-heart units, 20 = 10 hearts): fall = floor(blocks)-3
+  half-hearts past 3; drown = 10s air then 1/s; cactus = 1/s of contact; shambler
+  melee = 4 with knockback. Regen 1 per 4s after 8s undamaged. Creative is immune.
+- **Death:** red fade + Respawn button; the whole inventory drops as entities at the
+  death spot; respawn restores full health at the world spawn.
+- **Spawning:** puffs in daylight on grass, cap 12; shamblers at night on solid ground,
+  cap 10, despawn at sunrise with a dark poof (verified: a shambler placed in daylight
+  self-despawns immediately).
+- **Particles:** added the pooled `Points` system now (needed for hits/poof/splash/
+  break-burst) rather than waiting for Phase 8; block-break bursts use per-block colors.
+- **Test-harness gotcha (not a game bug):** the camera yaw convention is
+  `fwd = (-sin yaw, ·, -cos yaw)`, so `yaw = atan2(-dx, -dz)` to aim at a point — my
+  first screenshot attempts pointed 180° away. Documented so future shots aim right.

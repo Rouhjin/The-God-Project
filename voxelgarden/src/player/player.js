@@ -1,6 +1,7 @@
 // Player: movement physics, health/air state, creative fly.
 import * as THREE from 'three';
-import { stepEntity, feetInWater, eyesInWater } from '../world/physics.js';
+import { stepEntity, feetInWater, eyesInWater, touchesBlock } from '../world/physics.js';
+import { B } from '../world/blocks.js';
 
 const GRAVITY = -25;
 const WATER_GRAVITY = -4;
@@ -34,8 +35,10 @@ export class Player {
     this.spawnPoint = spawn.clone();
     this.fallStartY = this.pos.y;
 
+    this.cactusTimer = 0;              // accumulates cactus contact time
     this.onFall = null;                // (blocks) -> void, wired in Phase 7
-    this.onDamaged = null;
+    this.onDamaged = null;             // (amount) -> void (sound/flash)
+    this.onDeath = null;               // () -> void
   }
 
   eyePosition(out) {
@@ -118,5 +121,68 @@ export class Player {
     return this.pos.x + half > minX && this.pos.x - half < maxX &&
       this.pos.y + this.height > minY && this.pos.y < maxY &&
       this.pos.z + half > minZ && this.pos.z - half < maxZ;
+  }
+
+  damage(amount, knockDir) {
+    if (this.dead || this.creative) return;
+    this.health = Math.max(0, this.health - amount);
+    this.timeSinceDamage = 0;
+    if (knockDir) {
+      this.vel.x += knockDir.x * 5;
+      this.vel.z += knockDir.z * 5;
+      this.vel.y = Math.max(this.vel.y, 5);
+    }
+    if (this.onDamaged) this.onDamaged(amount);
+    if (this.health <= 0 && !this.dead) {
+      this.dead = true;
+      if (this.onDeath) this.onDeath();
+    }
+  }
+
+  // health/air/environment tick, run every frame
+  updateVitals(dt) {
+    if (this.dead || this.creative) { this.air = 10; return; }
+    this.timeSinceDamage += dt;
+
+    // drowning
+    if (this.headInWater) {
+      this.air -= dt;
+      if (this.air <= 0) {
+        this.air = 0;
+        this.drownTimer = (this.drownTimer || 0) + dt;
+        if (this.drownTimer >= 1) { this.drownTimer -= 1; this.damage(1); }
+      }
+    } else {
+      this.air = Math.min(10, this.air + dt * 4);
+      this.drownTimer = 0;
+    }
+
+    // cactus contact: half a heart per second of touching
+    if (touchesBlock(this.world, this, B.CACTUS)) {
+      this.cactusTimer += dt;
+      if (this.cactusTimer >= 1) { this.cactusTimer -= 1; this.damage(1); }
+    } else {
+      this.cactusTimer = 0;
+    }
+
+    // regen: half a heart every 4s if undamaged for 8s
+    if (this.timeSinceDamage > 8 && this.health < 20) {
+      this.regenTimer += dt;
+      if (this.regenTimer >= 4) { this.regenTimer -= 4; this.health = Math.min(20, this.health + 1); }
+    } else {
+      this.regenTimer = 0;
+    }
+  }
+
+  respawn() {
+    this.pos.copy(this.spawnPoint);
+    this.vel.set(0, 0, 0);
+    this.health = 20;
+    this.air = 10;
+    this.dead = false;
+    this.timeSinceDamage = 999;
+    this.fallStartY = this.pos.y;
+    this.drownTimer = 0;
+    this.cactusTimer = 0;
   }
 }
