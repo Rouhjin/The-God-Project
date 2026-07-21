@@ -57,6 +57,7 @@ class GeoBuilder {
     this.normals = [];
     this.uvs = [];
     this.colors = [];
+    this.glows = [];   // 1 = fullbright (ignores day/night tint), e.g. lantern light
     this.indices = [];
     this.vertCount = 0;
   }
@@ -66,6 +67,7 @@ class GeoBuilder {
       normals: new Float32Array(this.normals),
       uvs: new Float32Array(this.uvs),
       colors: new Float32Array(this.colors),
+      glows: new Float32Array(this.glows),
       indices: new Uint32Array(this.indices),
     };
   }
@@ -163,6 +165,7 @@ export function meshChunk(padded, bx = 0, bz = 0) {
             }
             const br = (glow ? 1.0 : face.shade) * ao[ci];
             builder.colors.push(br, br, br);
+            builder.glows.push(glow ? 1 : 0);
           }
           // flip the quad diagonal toward the brighter pair to avoid AO seams
           if (ao[0] + ao[3] > ao[1] + ao[2]) {

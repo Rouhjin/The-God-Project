@@ -13,7 +13,7 @@ const browser = await chromium.launch({
     '--disable-gpu-sandbox', '--ignore-gpu-blocklist',
   ],
 });
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
 
 const messages = [];
 page.on('console', (m) => {
@@ -22,10 +22,10 @@ page.on('console', (m) => {
 page.on('pageerror', (e) => messages.push(`[pageerror] ${e.message}`));
 
 await page.goto('http://localhost:5173/', { waitUntil: 'load' });
-await page.waitForTimeout(1200);
+await page.waitForTimeout(6000); // let the initial chunk flood settle before sampling fps
 
 if (doClick) {
-  await page.mouse.click(640, 360);
+  await page.mouse.click(480, 270);
   await page.waitForTimeout(500);
 }
 

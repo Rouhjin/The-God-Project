@@ -88,3 +88,24 @@ Running log of decisions made during development, newest at the bottom.
 - `?seed=` URL param selects the world seed until the Phase 8 title screen arrives.
 - `scripts/gen-stats.mjs` validates block distributions straight in Node (the
   generator is pure ESM — no browser needed).
+
+## Phase 5 — Sky & sound
+
+- **Two real bugs found by testing:**
+  1. *sRGB vs linear tint:* the day/night tint uniform multiplies in linear space, so
+     an "0.3 brightness" night tint rendered as ~0.58 perceived — night barely looked
+     dark. Keyframe tints are now converted with `convertSRGBToLinear()`.
+  2. *Edit-remesh starvation:* block-edit remeshes were queued behind the initial
+     ~289-chunk geometry upload flood (2/frame), so placing a block could take
+     seconds to appear. Edit remeshes now bypass the streaming queue and upload
+     the same frame; the streaming budget briefly raises to 4/frame during floods.
+- **Lantern fullbright** is a per-vertex `glow` attribute + `onBeforeCompile` patch on
+  the basic material: `diffuseColor.rgb *= mix(uTint, vec3(1), glow)`. Verified at
+  night: lantern + immediate neighbors stay warm-bright while the world sleeps.
+- **Sun path** rises at dawn-mid, sets at dusk-mid; moon runs the counter-schedule.
+  Stars fade with `nightness`; clouds dim at night and wrap in a 560-block window.
+- **Headless perf note:** SwiftShader (software GL) caps the harness at ~5-10 fps from
+  rasterization alone — JS frame cost measured at ~3.6 ms (window.__perf). Real-GPU
+  budget tracking uses draw calls (~120 after frustum culling) + JS ms, not headless fps.
+- Audio: master -> lowpass graph, family-pitched place/break/step blips, wind pad,
+  night crickets; underwater flips the lowpass to 620 Hz. Started on first click.

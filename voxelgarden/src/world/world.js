@@ -19,7 +19,8 @@ export class World {
     this.chunks = new Map();     // key -> Chunk (data present once loaded)
     this.pending = new Set();    // keys with an outstanding load request
     this.queue = [];             // [cx, cz] load requests sorted near->far
-    this.uploadQueue = [];       // worker replies awaiting geometry upload
+    this.uploadQueue = [];       // new-chunk geometry awaiting budgeted upload
+    this.editUploads = [];       // edit remeshes — applied immediately, never queued behind streaming
     this.outstanding = 0;
     this.centerCx = null;
     this.centerCz = null;
@@ -101,8 +102,13 @@ export class World {
       this.worker.postMessage({ type: 'load', cx: qx, cz: qz });
     }
 
-    // budgeted geometry uploads
-    for (let i = 0; i < UPLOADS_PER_FRAME && this.uploadQueue.length; i++) {
+    // edit remeshes apply immediately (small, interactivity-critical)
+    while (this.editUploads.length) this.applyMeshReply(this.editUploads.shift());
+
+    // budgeted geometry uploads for streamed-in chunks; drain faster during the
+    // initial flood so the spawn area appears promptly
+    const budget = this.uploadQueue.length > 40 ? 4 : UPLOADS_PER_FRAME;
+    for (let i = 0; i < budget && this.uploadQueue.length; i++) {
       this.applyMeshReply(this.uploadQueue.shift());
     }
   }
@@ -133,8 +139,9 @@ export class World {
     this.queue = wanted;
 
     // drop queued uploads for chunks that left the window
-    this.uploadQueue = this.uploadQueue.filter((m) =>
-      Math.max(Math.abs(m.cx - cx), Math.abs(m.cz - cz)) <= UNLOAD_DIST);
+    const inWindow = (m) => Math.max(Math.abs(m.cx - cx), Math.abs(m.cz - cz)) <= UNLOAD_DIST;
+    this.uploadQueue = this.uploadQueue.filter(inWindow);
+    this.editUploads = this.editUploads.filter(inWindow);
   }
 
   handleMessage(msg) {
@@ -155,7 +162,7 @@ export class World {
         cb();
       }
     } else if (msg.type === 'mesh') {
-      this.uploadQueue.push(msg);
+      this.editUploads.push(msg);
     }
   }
 

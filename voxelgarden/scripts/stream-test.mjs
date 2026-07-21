@@ -7,7 +7,7 @@ const browser = await chromium.launch({
   executablePath: '/opt/pw-browsers/chromium',
   args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
 });
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
 const messages = [];
 page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) messages.push(`[${m.type()}] ${m.text()}`); });
 page.on('pageerror', (e) => messages.push(`[pageerror] ${e.message}`));
