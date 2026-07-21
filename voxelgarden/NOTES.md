@@ -38,3 +38,19 @@ Running log of decisions made during development, newest at the bottom.
 - Textured flat chunk with tree, pool, ore/utility sample blocks: ✅ (screenshot)
 - Pointer lock + fly camera: ✅
 - Console: clean (fixed a favicon 404 with an inline SVG icon).
+
+## Phase 2 — Real world
+
+- **Worker protocol:** the worker is authoritative for *generated* data (regenerates
+  unedited chunks on demand, keeps edited ones); the main thread owns edits and streams
+  them to the worker (`edits` messages) before requesting remeshes. Chunk loads reply
+  with data + both geometry array sets, all as transferables.
+- **Cross-chunk correctness:** meshing always materializes the 3x3 chunk neighborhood
+  in the worker first, then meshes from an 18x98x18 padded snapshot — AO and culling
+  are seam-correct, including diagonal chunks.
+- **Streaming:** requests are queued nearest-first, max 10 in flight, re-sorted when
+  the player crosses a chunk border; 2 geometry uploads/frame on the main thread.
+  Unload beyond distance 10 (worker drops unedited copies too).
+- **Testing:** `scripts/stream-test.mjs` teleports the camera 400 blocks and checks
+  load/unload counts and console cleanliness (289 loaded at rest, settles fully,
+  no errors).
