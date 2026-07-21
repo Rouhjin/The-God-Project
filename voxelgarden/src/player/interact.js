@@ -121,8 +121,8 @@ export class Interact {
     const hit = this.target;
     if (!hit) return;
 
-    // right-click on an interactive block opens its UI instead
-    if (this.onUseBlock && (hit.id === B.CRAFT || hit.id === B.FURNACE)) {
+    // right-click on an interactive block (table/furnace/bed) instead of placing
+    if (this.onUseBlock && (hit.id === B.CRAFT || hit.id === B.FURNACE || hit.id === B.BED)) {
       if (this.onUseBlock(hit.x, hit.y, hit.z, hit.id)) return;
     }
 

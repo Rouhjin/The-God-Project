@@ -13,6 +13,7 @@ shapeless('lantern', 2, ['coal', 'planks', 'planks']); // Voxelgarden house rule
 shaped('stick', 4, ['P', 'P'], { P: 'planks' });
 shaped('crafting table', 1, ['PP', 'PP'], { P: 'planks' });
 shaped('furnace', 1, ['CCC', 'C C', 'CCC'], { C: 'cobblestone' });
+shaped('bed', 1, ['PPP', 'PPP'], { P: 'planks' }); // Voxelgarden house rule (no wool) — see NOTES
 
 const TIERS = [['wood', 'planks'], ['stone', 'cobblestone'], ['iron', 'iron ingot'], ['diamond', 'diamond']];
 for (const [tier, mat] of TIERS) {

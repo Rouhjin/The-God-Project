@@ -178,3 +178,30 @@ Running log of decisions made during development, newest at the bottom.
 - **Test note:** the earlier items/mobs test scripts now call
   `__vg.loadWorld(seed); __vg.enterPlaying()` after load since the game boots to the
   title screen instead of straight into play.
+
+## Phase 9 — Stretch goals
+
+Done in spec order, as time allowed:
+
+1. **Flood-fill voxel lighting** ✅ — the flagship. Sky + block light BFS-flooded in
+   the mesher over the padded neighbourhood, baked into per-vertex `skyLight`/
+   `blockLight` attributes, combined in the shader (`uSkyColor*sky + uBlockColor*block`,
+   ambient floor 0.05). Caves are genuinely dark; lanterns cast a warm radial glow;
+   day/night now dims via the skylight channel. Edits re-flood for free on remesh.
+   Replaces the old lantern-fullbright hack. Seams beyond the 1-block border soften on
+   the next remesh (acceptable; a full multi-chunk light pass would be the "correct"
+   but much heavier alternative).
+2. **Placed water spreading** — *deferred.* This is a stateful fluid cellular-automaton
+   (flow levels, per-tick spread, re-mesh churn) and by far the highest-risk item; static
+   water already works and the definition-of-done doesn't require flowing water. Chose to
+   spend the remaining budget on three lower-risk, higher-polish items instead.
+3. **Flowers & tall grass** ✅ — crossed billboard quads (new `cross` block render type),
+   scattered on grass in plains/forest, lit by the flood-fill light.
+4. **Tool durability** ✅ — per-stack `dur`; tools wear on block break / sword hit and
+   shatter at 0 (wood 60 … diamond 1500). Hotbar shows a green→red durability bar.
+5. **Beds** ✅ — right-click sets spawn on the bed and, at night, skips to next morning
+   (+ a small heal). House-rule recipe: 6 planks (2×3), since there's no wool.
+
+### Other house-rule recipes (no wool/coal-block/etc. in this game)
+- lantern = 1 coal + 2 planks (shapeless)
+- bed = 6 planks (2×3)

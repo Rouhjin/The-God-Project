@@ -18,6 +18,7 @@ item('crafting table', { kind: 'block', block: B.CRAFT });
 item('furnace', { kind: 'block', block: B.FURNACE });
 item('iron ore', { kind: 'block', block: B.IRON_ORE });
 item('gold ore', { kind: 'block', block: B.GOLD_ORE });
+item('bed', { kind: 'block', block: B.BED });
 
 // materials
 item('stick', { kind: 'material' });
@@ -30,12 +31,14 @@ item('diamond', { kind: 'material' });
 const TIER_NAMES = ['', 'wood', 'stone', 'iron', 'diamond'];
 const TIER_SPEED = [1, 2, 4, 6, 8];
 const SWORD_DAMAGE = [1, 4, 5, 6, 7];
+const TIER_DUR = [0, 60, 132, 250, 1500];
 for (let tier = 1; tier <= 4; tier++) {
   const t = TIER_NAMES[tier];
-  item(`${t} pickaxe`, { kind: 'tool', stack: 1, tool: 'pick', tier, speed: TIER_SPEED[tier] });
-  item(`${t} axe`, { kind: 'tool', stack: 1, tool: 'axe', tier, speed: TIER_SPEED[tier] });
-  item(`${t} shovel`, { kind: 'tool', stack: 1, tool: 'shovel', tier, speed: TIER_SPEED[tier] });
-  item(`${t} sword`, { kind: 'tool', stack: 1, tool: 'sword', tier, damage: SWORD_DAMAGE[tier] });
+  const dur = TIER_DUR[tier];
+  item(`${t} pickaxe`, { kind: 'tool', stack: 1, tool: 'pick', tier, speed: TIER_SPEED[tier], maxDur: dur });
+  item(`${t} axe`, { kind: 'tool', stack: 1, tool: 'axe', tier, speed: TIER_SPEED[tier], maxDur: dur });
+  item(`${t} shovel`, { kind: 'tool', stack: 1, tool: 'shovel', tier, speed: TIER_SPEED[tier], maxDur: dur });
+  item(`${t} sword`, { kind: 'tool', stack: 1, tool: 'sword', tier, damage: SWORD_DAMAGE[tier], maxDur: dur });
 }
 
 export const TIER_MATERIALS = { planks: 1, cobblestone: 2, 'iron ingot': 3, diamond: 4 };

@@ -56,6 +56,22 @@ export class Inventory {
 
   isEmpty() { return this.slots.every((s) => !s) && !this.cursor; }
 
+  // Wear down the selected tool by one use; returns 'broke' if it shattered.
+  damageSelectedTool() {
+    const s = this.slots[this.selected];
+    if (!s) return null;
+    const def = ITEMS[s.id];
+    if (!def || def.kind !== 'tool' || !def.maxDur) return null;
+    s.dur = (s.dur ?? def.maxDur) - 1;
+    if (s.dur <= 0) {
+      this.slots[this.selected] = null;
+      this.changed();
+      return 'broke';
+    }
+    this.changed();
+    return 'worn';
+  }
+
   // drag & drop actions on a slot array (works for inventory + craft grids)
   // button 0 = pick up / place all / swap; button 2 = place one / split half
   clickSlot(arr, i, button) {

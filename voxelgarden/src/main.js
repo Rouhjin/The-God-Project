@@ -335,13 +335,15 @@ interact.onBreak = (x, y, z, id) => {
   }
   if (player.creative) return;
   const b = BLOCKS[id];
+  const held = inventory.selectedItem();
+  // decide the drop with the tool as it is now (before wear)
   const itemId = b.drops && ITEMS[b.drops] ? b.drops : null;
-  if (!itemId) return;
-  if (b.tier > 0) {
-    const held = inventory.selectedItem();
-    if (!held || held.tool !== 'pick' || held.tier < b.tier) return;
+  const tierOk = b.tier === 0 || (held && held.tool === 'pick' && held.tier >= b.tier);
+  // wear down a tool used on this block
+  if (held && held.kind === 'tool' && b.hardness > 0.1) {
+    if (inventory.damageSelectedTool() === 'broke') { audio.hurt(); hudUI.showToast(held.id + ' broke'); }
   }
-  drops.spawn(x + 0.5, y + 0.25, z + 0.5, itemId);
+  if (itemId && tierOk) drops.spawn(x + 0.5, y + 0.25, z + 0.5, itemId);
 };
 interact.onPlace = (x, y, z, id) => audio.place(blockFamily(BLOCKS[id].name));
 let breakTickAcc = 0;
@@ -352,8 +354,23 @@ interact.onBreakTick = (x, y, z, id) => {
 interact.onUseBlock = (x, y, z, id) => {
   if (id === B.CRAFT) { screens.open('craft'); return true; }
   if (id === B.FURNACE) { screens.open('furnace', [x, y, z]); return true; }
+  if (id === B.BED) { useBed(x, y, z); return true; }
   return false;
 };
+function useBed(x, y, z) {
+  // set spawn on top of the bed
+  player.spawnPoint.set(x + 0.5, y + 1.01, z + 0.5);
+  hudUI.showToast('spawn point set');
+  audio.click();
+  if (sky.nightness > 0.4) {
+    // skip to the next morning
+    const day = Math.floor(sky.time / CYCLE_SECONDS);
+    sky.time = (day + 1) * CYCLE_SECONDS + 0.03 * CYCLE_SECONDS;
+    player.health = Math.min(20, player.health + 4); // a good night's rest
+    hudUI.showToast('good morning');
+    doSave();
+  }
+}
 interact.entityAt = (a, b, c, d, e, f) => mobs.anyIntersecting(a, b, c, d, e, f);
 
 const _atkDir = new THREE.Vector3();
@@ -371,6 +388,9 @@ interact.onAttack = () => {
   mob.hurt(dmg, { x: _atkDir.x, z: _atkDir.z });
   particles.burstHit(mob.pos.x, mob.pos.y + mob.height * 0.6, mob.pos.z);
   audio.thump();
+  if (!player.creative && held && held.tool === 'sword') {
+    if (inventory.damageSelectedTool() === 'broke') { audio.hurt(); hudUI.showToast(held.id + ' broke'); }
+  }
   return true;
 };
 

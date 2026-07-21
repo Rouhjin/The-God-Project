@@ -12,6 +12,9 @@ const STYLE = `
 .vg-slot img { width:100%; height:100%; image-rendering:pixelated; display:block; }
 .vg-slot .ct { position:absolute; right:3px; bottom:1px; color:#fff6e5; font-size:13px;
   font-weight:700; text-shadow:0 1px 2px rgba(0,0,0,.8); }
+.vg-slot .dur { position:absolute; left:5px; right:5px; bottom:4px; height:3px;
+  border-radius:2px; background:rgba(0,0,0,.5); overflow:hidden; display:none; }
+.vg-slot .dur i { display:block; height:100%; border-radius:2px; }
 .vg-hearts { position:absolute; bottom:70px; left:50%; transform:translateX(-50%);
   display:flex; gap:2px; pointer-events:none; }
 .vg-heart { width:18px; height:18px; }
@@ -52,7 +55,7 @@ export class Hud {
     for (let i = 0; i < 9; i++) {
       const el = document.createElement('div');
       el.className = 'vg-slot';
-      el.innerHTML = '<img style="display:none"><span class="ct"></span>';
+      el.innerHTML = '<img style="display:none"><span class="ct"></span><div class="dur"><i></i></div>';
       this.hotbar.appendChild(el);
       this.slotEls.push(el);
     }
@@ -85,13 +88,23 @@ export class Hud {
       el.classList.toggle('sel', i === inv.selected);
       const img = el.querySelector('img');
       const ct = el.querySelector('.ct');
+      const dur = el.querySelector('.dur');
       if (s) {
         img.src = this.icons.get(s.id);
         img.style.display = 'block';
         ct.textContent = s.count > 1 ? s.count : '';
+        const def = ITEMS[s.id];
+        if (def && def.maxDur && s.dur !== undefined && s.dur < def.maxDur) {
+          const frac = Math.max(0, s.dur / def.maxDur);
+          dur.style.display = 'block';
+          const bar = dur.querySelector('i');
+          bar.style.width = (frac * 100) + '%';
+          bar.style.background = frac > 0.5 ? '#6cc551' : frac > 0.25 ? '#ffd447' : '#ff5a54';
+        } else dur.style.display = 'none';
       } else {
         img.style.display = 'none';
         ct.textContent = '';
+        dur.style.display = 'none';
       }
     }
   }
