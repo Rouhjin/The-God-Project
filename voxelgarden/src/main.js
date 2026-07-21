@@ -11,6 +11,13 @@ import { Interact } from './player/interact.js';
 import { Sky } from './env/sky.js';
 import { UnderwaterFX } from './env/water.js';
 import { AudioSys, blockFamily } from './audio.js';
+import { ITEMS } from './items/items.js';
+import { Inventory } from './items/inventory.js';
+import { Drops } from './items/drops.js';
+import { Furnaces } from './items/furnace.js';
+import { buildIcons } from './ui/icons.js';
+import { Hud } from './ui/hud.js';
+import { Screens } from './ui/screens.js';
 
 const app = document.getElementById('app');
 const hud = document.getElementById('hud');
@@ -95,37 +102,90 @@ const controls = new Controls(renderer.domElement);
 renderer.domElement.addEventListener('click', () => { controls.lock(); audio.ensure(); });
 const interact = new Interact(scene, world, player, camera, controls);
 
-// sound hooks
-interact.onBreak = (x, y, z, id) => audio.breakBlock(blockFamily(BLOCKS[id].name));
+// ---- items, inventory, crafting, furnace ----
+const inventory = new Inventory();
+const furnaces = new Furnaces();
+const { icons, canvases: iconCanvases } = buildIcons(atlasTex);
+const drops = new Drops(scene, world, atlasTex, iconCanvases);
+const hudUI = new Hud(hud, inventory, icons);
+const screens = new Screens(hud, inventory, furnaces, icons, audio, drops);
+screens.spillAt = () => [player.pos.x, player.pos.y + 0.6, player.pos.z];
+inventory.onChange = () => { hudUI.render(); if (screens.isOpen) screens.render(); };
+screens.onOpenChange = (open) => {
+  controls.enabled = !open;
+  if (open) controls.unlock();
+  else controls.lock();
+};
+
+// what the selected hotbar item can do
+interact.getPlaceBlock = () => {
+  const it = inventory.selectedItem();
+  return it && it.kind === 'block' ? it.block : 0;
+};
+interact.consumePlaced = () => player.creative ? true : inventory.consumeSelected(1);
+interact.speedMultiplier = (blockId) => {
+  const held = inventory.selectedItem();
+  const b = BLOCKS[blockId];
+  if (held && held.kind === 'tool' && b.tool && held.tool === b.tool) return held.speed;
+  return 1;
+};
+
+interact.onBreak = (x, y, z, id) => {
+  audio.breakBlock(blockFamily(BLOCKS[id].name));
+  if (id === B.FURNACE) {
+    for (const s of furnaces.breakAt(x, y, z)) drops.spawn(x + 0.5, y + 0.3, z + 0.5, s.id, s.count);
+  }
+  if (player.creative) return; // creative breaking yields no drops
+  const b = BLOCKS[id];
+  const itemId = b.drops && ITEMS[b.drops] ? b.drops : null;
+  if (!itemId) return;
+  if (b.tier > 0) {
+    const held = inventory.selectedItem();
+    if (!held || held.tool !== 'pick' || held.tier < b.tier) return; // wrong pick tier: no drop
+  }
+  drops.spawn(x + 0.5, y + 0.25, z + 0.5, itemId);
+};
 interact.onPlace = (x, y, z, id) => audio.place(blockFamily(BLOCKS[id].name));
 let breakTickAcc = 0;
 interact.onBreakTick = (x, y, z, id) => {
   breakTickAcc += 1;
   if (breakTickAcc % 12 === 0) audio.breakTick(blockFamily(BLOCKS[id].name));
 };
+interact.onUseBlock = (x, y, z, id) => {
+  if (id === B.CRAFT) { screens.open('craft'); return true; }
+  if (id === B.FURNACE) { screens.open('furnace', [x, y, z]); return true; }
+  return false;
+};
 
-// Phase 3 building palette (replaced by real inventory in Phase 6)
-const palette = [B.PLANKS, B.COBBLE, B.GLASS, B.LANTERN, B.LOG, B.LEAVES, B.SAND, B.CRAFT, B.FURNACE];
-let paletteIdx = 0;
-interact.getPlaceBlock = () => palette[paletteIdx];
+function selectSlot(i) {
+  inventory.selected = i;
+  hudUI.render();
+  const s = inventory.slots[i];
+  if (s) hudUI.showToast(ITEMS[s.id].id);
+}
 
-controls.onKeyPress = (code) => {
-  if (code.startsWith('Digit')) {
+controls.onKeyPress = (code, e) => {
+  if (code.startsWith('Digit') && !screens.isOpen) {
     const n = Number(code.slice(5));
-    if (n >= 1 && n <= palette.length) { paletteIdx = n - 1; updatePaletteHud(); }
+    if (n >= 1 && n <= 9) selectSlot(n - 1);
   }
+  if (code === 'KeyE') {
+    if (screens.isOpen) screens.close();
+    else screens.open('inventory');
+  }
+  if (code === 'Escape' && screens.isOpen) screens.close();
   if (code === 'F4') {
     player.creative = !player.creative;
     if (!player.creative) player.flying = false;
-    updatePaletteHud();
+    hudUI.showToast(player.creative ? 'creative mode' : 'survival mode');
   }
 };
 controls.onDoubleSpace = () => {
   if (player.creative) { player.flying = !player.flying; player.vel.y = 0; }
 };
 controls.onWheel = (dy) => {
-  paletteIdx = (paletteIdx + (dy > 0 ? 1 : -1) + palette.length) % palette.length;
-  updatePaletteHud();
+  if (screens.isOpen) return;
+  selectSlot((inventory.selected + (dy > 0 ? 1 : -1) + 9) % 9);
 };
 
 // ---- HUD ----
@@ -133,7 +193,7 @@ const hint = document.createElement('div');
 hint.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   background:rgba(255,246,229,.92);color:#2e2a26;padding:14px 22px;border-radius:14px;
   font-size:15px;letter-spacing:.02em;pointer-events:none;text-align:center;line-height:1.5;`;
-hint.innerHTML = 'Click to play<br><span style="font-size:12px">WASD move · Space jump · LMB break · RMB place · 1-9/wheel select · F4 creative</span>';
+hint.innerHTML = 'Click to play<br><span style="font-size:12px">WASD move · Space jump · LMB break · RMB place · E inventory · 1-9/wheel hotbar</span>';
 hud.appendChild(hint);
 controls.onLockChange = (locked) => { hint.style.display = locked ? 'none' : 'block'; };
 
@@ -149,15 +209,6 @@ stats.style.cssText = `position:absolute;top:8px;left:8px;background:rgba(46,42,
   color:#fff6e5;padding:6px 10px;border-radius:8px;font-size:12px;font-family:monospace;`;
 hud.appendChild(stats);
 
-const paletteHud = document.createElement('div');
-paletteHud.style.cssText = `position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
-  background:rgba(255,246,229,.9);color:#2e2a26;padding:8px 14px;border-radius:12px;font-size:13px;`;
-hud.appendChild(paletteHud);
-function updatePaletteHud() {
-  paletteHud.textContent = `[${paletteIdx + 1}] ${BLOCKS[palette[paletteIdx]].name}` +
-    (player.creative ? ` · CREATIVE${player.flying ? ' (flying)' : ''}` : '');
-}
-updatePaletteHud();
 
 // ---- loop ----
 let last = performance.now();
@@ -200,6 +251,10 @@ function tick(now) {
   interact.update(dt);
   const t2 = mark(); perf.interact += t2 - t1;
   world.update(player.pos.x, player.pos.z);
+  drops.update(dt, player, inventory, () => audio.pickup());
+  furnaces.update(dt, () => audio.smeltPop());
+  screens.update(dt);
+  hudUI.updateVitals(player);
   const t3 = mark(); perf.world += t3 - t2;
 
   // environment
@@ -240,4 +295,4 @@ function tick(now) {
 requestAnimationFrame(tick);
 
 // debug/testing handle
-window.__vg = { camera, world, controls, player, interact, sky, audio, renderer, tintUniform, solidMat };
+window.__vg = { camera, world, controls, player, interact, sky, audio, renderer, tintUniform, solidMat, inventory, drops, furnaces, screens };

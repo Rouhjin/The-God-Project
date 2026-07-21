@@ -109,3 +109,21 @@ Running log of decisions made during development, newest at the bottom.
   budget tracking uses draw calls (~120 after frustum culling) + JS ms, not headless fps.
 - Audio: master -> lowpass graph, family-pitched place/break/step blips, wind pad,
   night crickets; underwater flips the lowpass to 620 Hz. Started on first click.
+
+## Phase 6 — Items, inventory, crafting, furnace
+
+- **Lantern recipe (house rule):** the spec's recipe list has no lantern, but the
+  definition-of-done requires lighting a shelter on day one. Added: 1 coal + 2 planks
+  (shapeless) -> 2 lanterns.
+- **Icons:** block items are snapshotted from an offscreen orthographic Three scene
+  (per spec); tools/materials are painted 16x16 pixel art instead of 3D-modeled —
+  looks crisper at HUD size (deviation noted).
+- **Creative breaking drops nothing** (avoids trivial item duplication in debug mode).
+- **Furnace output slot is take-only**; the furnace UI re-renders 4x/s since smelting
+  continues while the screen is open or closed. Furnace contents drop when broken.
+- **Drop magnetism steers velocity directly** — force accumulation overshot and
+  orbited the player at low frame rates.
+- **Bug fixed by test:** the craft result never matched because the grid holds stack
+  objects, not id strings — matchRecipe now gets a mapped id grid.
+- Tests: crafting matcher unit-tested in Node (13 cases incl. mirrored shapes);
+  browser test crafts through real DOM clicks, smelts, checks tier gating + pickup.
