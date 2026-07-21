@@ -70,3 +70,21 @@ Running log of decisions made during development, newest at the bottom.
   changes or the button is released.
 - Phase 3 uses a temporary 9-slot palette (planks/cobble/glass/...) until real
   inventory arrives in Phase 6; placing is free for now.
+
+## Phase 4 — Living landscape
+
+- **Chunk-independent structures:** every chunk scans a 2-column margin and re-derives
+  tree/cactus decisions from per-column seeded hashes, writing only its own cells —
+  trees crossing borders are generated identically by all chunks involved, no second
+  pass needed. Ore veins likewise: each chunk re-walks the veins seeded in its 3x3
+  chunk neighborhood and clips writes to itself.
+- **Cave flood guard:** columns at/below sea level+1 only carve up to h-2, keeping a
+  2-block floor under the water table. Horizontal water-vs-cave faces can still exist
+  (static water, like classic alpha) — real spreading is a Phase 9 stretch item.
+- **Ore rates** (9x9 chunk sample): coal .066%, iron .054%, gold .017%, diamond .006%
+  of all blocks — correct rarity ordering, diamonds only y2-12.
+- **Snow dusting:** snowfield trees get a checkered snow layer above the crown.
+- **Trees skip beaches** (h <= sea+2) so shorelines stay open.
+- `?seed=` URL param selects the world seed until the Phase 8 title screen arrives.
+- `scripts/gen-stats.mjs` validates block distributions straight in Node (the
+  generator is pure ESM — no browser needed).

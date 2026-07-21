@@ -55,7 +55,7 @@ const waterMat = new THREE.MeshBasicMaterial({
 });
 
 // ---- world & player ----
-const seed = 'voxelgarden';
+const seed = new URLSearchParams(location.search).get('seed') || 'voxelgarden';
 const world = new World(scene, solidMat, waterMat, seed);
 const gen = new WorldGen(seed);
 
