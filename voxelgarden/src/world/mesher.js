@@ -57,7 +57,8 @@ class GeoBuilder {
     this.normals = [];
     this.uvs = [];
     this.colors = [];
-    this.glows = [];   // 1 = fullbright (ignores day/night tint), e.g. lantern light
+    this.skyLight = [];   // 0..1 sunlight reaching this vertex (dimmed by time of day)
+    this.blockLight = []; // 0..1 lantern/emitter light (time-independent, warm)
     this.indices = [];
     this.vertCount = 0;
   }
@@ -67,9 +68,71 @@ class GeoBuilder {
       normals: new Float32Array(this.normals),
       uvs: new Float32Array(this.uvs),
       colors: new Float32Array(this.colors),
-      glows: new Float32Array(this.glows),
+      skyLight: new Float32Array(this.skyLight),
+      blockLight: new Float32Array(this.blockLight),
       indices: new Uint32Array(this.indices),
     };
+  }
+}
+
+const MAX_LIGHT = 15;
+
+// Flood-fill sky + block light over the padded neighborhood.
+// Sky descends at full strength through non-opaque cells until the first opaque
+// block in a column, then BFS-spreads horizontally (-1/step). Block light spreads
+// out from lantern emitters (-1/step). Returns two Uint8Arrays (0..15) sized to the
+// padded volume. Correct within the loaded neighbourhood; seams beyond the 1-block
+// border soften on the next remesh.
+export function computeLight(padded) {
+  const N = padded.length;
+  const sky = new Uint8Array(N);
+  const block = new Uint8Array(N);
+
+  const idx = (x, y, z) => (x + 1) + (z + 1) * PSTRIDE_Z + (y + 1) * PSTRIDE_Y;
+
+  // --- skylight seed: vertical descent per column ---
+  const skyQ = [];
+  for (let z = -1; z <= CZ; z++) {
+    for (let x = -1; x <= CX; x++) {
+      let lit = true;
+      for (let y = CY; y >= -1; y--) {
+        const i = idx(x, y, z);
+        if (isOpaque(padded[i])) { lit = false; continue; }
+        if (lit) { sky[i] = MAX_LIGHT; skyQ.push(i); }
+      }
+    }
+  }
+  floodSpread(padded, sky, skyQ);
+
+  // --- block light seed: lantern emitters ---
+  const blockQ = [];
+  for (let i = 0; i < N; i++) {
+    if (padded[i] === B.LANTERN) { block[i] = MAX_LIGHT; blockQ.push(i); }
+  }
+  floodSpread(padded, block, blockQ);
+
+  return { sky, block };
+}
+
+// 6-neighbour BFS; light drops by 1 per step into non-opaque cells.
+// (Emitters may themselves be opaque, e.g. lanterns; light only enters
+// non-opaque neighbours from them.)
+function floodSpread(padded, light, queue) {
+  const step = [1, -1, PSTRIDE_Z, -PSTRIDE_Z, PSTRIDE_Y, -PSTRIDE_Y];
+  const N = padded.length;
+  let qh = 0;
+  while (qh < queue.length) {
+    const i = queue[qh++];
+    const l = light[i];
+    if (l <= 1) continue;
+    for (let s = 0; s < 6; s++) {
+      const ni = i + step[s];
+      if (ni < 0 || ni >= N) continue;
+      if (isOpaque(padded[ni])) continue;
+      if (light[ni] >= l - 1) continue;
+      light[ni] = l - 1;
+      queue.push(ni);
+    }
   }
 }
 
@@ -86,14 +149,13 @@ const WATER_UV_SCALE = 0.5; // water texture repeats every 2 blocks, in world sp
 export function meshChunk(padded, bx = 0, bz = 0) {
   const solid = new GeoBuilder();
   const water = new GeoBuilder();
+  const light = computeLight(padded);
 
-  const at = (x, y, z) => padded[(x + 1) + (z + 1) * PSTRIDE_Z + (y + 1) * PSTRIDE_Y];
+  const pIndex = (x, y, z) => (x + 1) + (z + 1) * PSTRIDE_Z + (y + 1) * PSTRIDE_Y;
+  const at = (x, y, z) => padded[pIndex(x, y, z)];
   const opaqueAt = (x, y, z) => isOpaque(at(x, y, z));
-  const glowTouches = (x, y, z) =>
-    at(x, y, z) === B.LANTERN ||
-    at(x + 1, y, z) === B.LANTERN || at(x - 1, y, z) === B.LANTERN ||
-    at(x, y + 1, z) === B.LANTERN || at(x, y - 1, z) === B.LANTERN ||
-    at(x, y, z + 1) === B.LANTERN || at(x, y, z - 1) === B.LANTERN;
+  const skyAt = (x, y, z) => light.sky[pIndex(x, y, z)] / MAX_LIGHT;
+  const blockAt = (x, y, z) => light.block[pIndex(x, y, z)] / MAX_LIGHT;
 
   for (let y = 0; y < CY; y++) {
     for (let z = 0; z < CZ; z++) {
@@ -122,10 +184,13 @@ export function meshChunk(padded, bx = 0, bz = 0) {
           const builder = isWater ? water : solid;
           const [u0, v0, u1, v1] = uvRect(tileFor(block, f));
 
-          // per-corner AO (solid only) + brightness
-          const glow = block.glow || glowTouches(x + dx, y + dy, z + dz);
+          // light sampled from the non-opaque cell this face looks into
+          const faceSky = skyAt(x + dx, y + dy, z + dz);
+          const faceBlock = blockAt(x + dx, y + dy, z + dz);
+
+          // per-corner AO (solid only)
           const ao = [1, 1, 1, 1];
-          if (!isWater && !glow) {
+          if (!isWater) {
             const a = face.axis;
             const ua = a === 0 ? 1 : 0;           // first non-face axis
             const va = a === 2 ? 1 : 2;           // second non-face axis
@@ -163,9 +228,10 @@ export function meshChunk(padded, bx = 0, bz = 0) {
                 v0 + (v1 - v0) * c.uv[1],
               );
             }
-            const br = (glow ? 1.0 : face.shade) * ao[ci];
+            const br = face.shade * ao[ci];
             builder.colors.push(br, br, br);
-            builder.glows.push(glow ? 1 : 0);
+            builder.skyLight.push(faceSky);
+            builder.blockLight.push(faceBlock);
           }
           // flip the quad diagonal toward the brighter pair to avoid AO seams
           if (ao[0] + ao[3] > ao[1] + ao[2]) {

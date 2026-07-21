@@ -38,9 +38,9 @@ function buildMesh(cx, cz) {
 function meshTransfers(m) {
   return [
     m.solid.positions.buffer, m.solid.normals.buffer, m.solid.uvs.buffer,
-    m.solid.colors.buffer, m.solid.glows.buffer, m.solid.indices.buffer,
+    m.solid.colors.buffer, m.solid.skyLight.buffer, m.solid.blockLight.buffer, m.solid.indices.buffer,
     m.water.positions.buffer, m.water.normals.buffer, m.water.uvs.buffer,
-    m.water.colors.buffer, m.water.glows.buffer, m.water.indices.buffer,
+    m.water.colors.buffer, m.water.skyLight.buffer, m.water.blockLight.buffer, m.water.indices.buffer,
   ];
 }
 

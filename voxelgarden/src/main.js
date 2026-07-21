@@ -60,21 +60,35 @@ waterTex.generateMipmaps = false;
 waterTex.wrapS = waterTex.wrapT = THREE.RepeatWrapping;
 waterTex.colorSpace = THREE.SRGBColorSpace;
 
-const tintUniform = { value: new THREE.Color(1, 1, 1) };
-const solidMat = new THREE.MeshBasicMaterial({ map: atlasTex, vertexColors: true, alphaTest: 0.5 });
-solidMat.onBeforeCompile = (shader) => {
-  shader.uniforms.uTint = tintUniform;
+// Flood-fill lighting: skyLight (dimmed by time of day via uSkyColor) + blockLight
+// (warm, time-independent) are combined per fragment. uSkyColor carries the day/night
+// horizon tint AND its brightness, so night surfaces go dim-blue and unlit caves fall
+// to uAmbient — genuinely dark until you place a lantern.
+const skyColorUniform = { value: new THREE.Color(1, 1, 1) };   // = sky.tint each frame
+const blockColorUniform = { value: new THREE.Color(1.0, 0.82, 0.5) }; // warm lantern light
+const ambientUniform = { value: 0.05 };
+function patchLighting(shader) {
+  shader.uniforms.uSkyColor = skyColorUniform;
+  shader.uniforms.uBlockColor = blockColorUniform;
+  shader.uniforms.uAmbient = ambientUniform;
   shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float glow;\nvarying float vGlow;')
-    .replace('#include <color_vertex>', '#include <color_vertex>\nvGlow = glow;');
+    .replace('#include <common>', '#include <common>\nattribute float skyLight;\nattribute float blockLight;\nvarying float vSky;\nvarying float vBlock;')
+    .replace('#include <color_vertex>', '#include <color_vertex>\nvSky = skyLight;\nvBlock = blockLight;');
   shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', '#include <common>\nuniform vec3 uTint;\nvarying float vGlow;')
-    .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb *= mix(uTint, vec3(1.0), vGlow);');
-};
+    .replace('#include <common>', '#include <common>\nuniform vec3 uSkyColor;\nuniform vec3 uBlockColor;\nuniform float uAmbient;\nvarying float vSky;\nvarying float vBlock;')
+    .replace('#include <color_fragment>',
+      '#include <color_fragment>\n' +
+      '  vec3 vgLight = uSkyColor * vSky + uBlockColor * vBlock;\n' +
+      '  vgLight = clamp(vgLight, vec3(uAmbient), vec3(1.0));\n' +
+      '  diffuseColor.rgb *= vgLight;');
+}
+const solidMat = new THREE.MeshBasicMaterial({ map: atlasTex, vertexColors: true, alphaTest: 0.5 });
+solidMat.onBeforeCompile = patchLighting;
 const waterMat = new THREE.MeshBasicMaterial({
   map: waterTex, vertexColors: true, transparent: true, opacity: 0.65,
   depthWrite: false, side: THREE.DoubleSide,
 });
+waterMat.onBeforeCompile = patchLighting;
 
 // representative break-burst colors per block
 const BREAK_COLORS = {
@@ -490,8 +504,7 @@ function tick(now) {
 
   // environment
   sky.update(dt, camera.position, scene.fog);
-  tintUniform.value.copy(sky.tint);
-  waterMat.color.copy(sky.tint);
+  skyColorUniform.value.copy(sky.tint);
   underwaterFX.update(simulate && player.headInWater, scene.fog, viewEdge);
   if (simulate) {
     if (player.headInWater !== wasUnderwater) { audio.setUnderwater(player.headInWater); wasUnderwater = player.headInWater; }
@@ -551,7 +564,7 @@ requestAnimationFrame(tick);
 
 // debug/testing handle
 window.__vg = {
-  camera, world, controls, player, interact, sky, audio, renderer, tintUniform, solidMat,
+  camera, world, controls, player, interact, sky, audio, renderer, skyColorUniform, solidMat,
   inventory, drops, furnaces, screens, mobs, particles, saveManager,
   get state() { return state; },
   enterPlaying, loadWorld, applySave, collectSave, doSave,
