@@ -131,7 +131,7 @@ export class Interact {
     const x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
     if (y < 0 || y >= 96) return;
     const existing = this.world.getBlock(x, y, z);
-    if (existing !== B.AIR && existing !== B.WATER) return;
+    if (existing !== B.AIR && existing !== B.WATER && !BLOCKS[existing].replaceable) return;
 
     // never place inside the player or a mob
     if (BLOCKS[id].solid) {

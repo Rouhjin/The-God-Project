@@ -15,6 +15,7 @@ export const TILE = {
   BEDROCK: 12, COAL_ORE: 13, IRON_ORE: 14, GOLD_ORE: 15,
   DIAMOND_ORE: 16, LANTERN: 17, SNOW: 18, CACTUS_SIDE: 19, CACTUS_TOP: 20,
   CRAFT_TOP: 21, CRAFT_SIDE: 22, FURNACE_FRONT: 23, FURNACE_TOP: 24,
+  TALLGRASS: 25, FLOWER_A: 26, FLOWER_B: 27, BED_TOP: 28, BED_SIDE: 29,
 };
 
 // Half-texel inset so filtering never bleeds neighboring tiles.
@@ -314,6 +315,61 @@ function drawTiles(ctx, rng) {
     p.px(4, 4, '#75797f', 8, 8);
     p.px(5, 5, '#606468', 6, 6);
     p.stickerEdge('#8b9199');
+  }
+  // tall grass: transparent tile with upright blades (drawn as a cross billboard)
+  {
+    const p = P(TILE.TALLGRASS);
+    p.clearPx(0, 0, 16, 16);
+    for (let bx = 2; bx < 15; bx += 2) {
+      const h = 7 + ((rng() * 6) | 0);
+      const top = 15 - h;
+      const shade = rng() < 0.5 ? '#6cc551' : '#57a83f';
+      for (let y = 15; y >= top; y--) {
+        const lean = ((15 - y) * (rng() < 0.5 ? 0.3 : -0.2)) | 0;
+        p.px(Math.max(0, Math.min(15, bx + lean)), y, shade);
+      }
+      p.px(Math.max(0, Math.min(15, bx)), top, '#8fdd6a');
+    }
+  }
+  // flower A: pink/red bloom on a stem
+  {
+    const p = P(TILE.FLOWER_A);
+    p.clearPx(0, 0, 16, 16);
+    for (let y = 15; y >= 8; y--) p.px(7, y, '#3f8f4f');
+    p.px(6, 11, '#57a83f'); p.px(9, 12, '#57a83f');
+    p.px(6, 5, '#ff8fb0', 4, 4);
+    p.px(5, 6, '#ff8fb0', 6, 2);
+    p.px(7, 4, '#ff8fb0', 2, 6);
+    p.px(7, 6, '#ffd977', 2, 2);
+  }
+  // flower B: yellow bloom
+  {
+    const p = P(TILE.FLOWER_B);
+    p.clearPx(0, 0, 16, 16);
+    for (let y = 15; y >= 9; y--) p.px(8, y, '#3f8f4f');
+    p.px(6, 10, '#57a83f'); p.px(10, 11, '#57a83f');
+    p.px(6, 5, '#ffd447', 5, 5);
+    p.px(5, 6, '#ffd447', 7, 3);
+    p.px(8, 3, '#ffd447', 1, 9);
+    p.px(7, 6, '#ff9e3d', 3, 3);
+  }
+  // bed top: cozy quilt
+  {
+    const p = P(TILE.BED_TOP);
+    p.fill('#d95f6a');
+    p.px(1, 1, '#f0e2c8', 14, 4); // pillow
+    p.speckle('#e8737e', 12); p.speckle('#c04b56', 12);
+    p.px(2, 8, '#c04b56', 12, 1); p.px(2, 11, '#c04b56', 12, 1);
+    p.stickerEdge('#d95f6a');
+  }
+  // bed side
+  {
+    const p = P(TILE.BED_SIDE);
+    p.fill('#d95f6a');
+    p.px(0, 0, '#f0e2c8', 16, 5);
+    p.px(0, 11, '#7a5a3a', 16, 5); // wooden base
+    p.speckle('#e8737e', 8);
+    p.stickerEdge('#a84f58');
   }
 }
 

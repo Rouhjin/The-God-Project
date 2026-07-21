@@ -23,6 +23,10 @@ export const B = {
   CACTUS: 18,
   CRAFT: 19,
   FURNACE: 20,
+  TALLGRASS: 21,
+  FLOWER_A: 22,
+  FLOWER_B: 23,
+  BED: 24,
 };
 
 // tool: which tool class speeds this block up. tier: minimum pickaxe tier for drops
@@ -40,6 +44,8 @@ function def(id, name, o) {
     drops: o.drops === undefined ? name : o.drops,
     tiles: o.tiles ?? [TILE.STONE, TILE.STONE, TILE.STONE],
     glow: o.glow ?? false,
+    cross: o.cross ?? false,   // rendered as crossed billboard quads (plants)
+    replaceable: o.replaceable ?? false, // blocks can be placed into this cell
   };
 }
 
@@ -64,6 +70,10 @@ def(B.SNOW, 'snow', { hardness: 0.8, tool: 'shovel', drops: 'dirt', tiles: [TILE
 def(B.CACTUS, 'cactus', { hardness: 0.6, tiles: [TILE.CACTUS_TOP, TILE.CACTUS_TOP, TILE.CACTUS_SIDE] });
 def(B.CRAFT, 'crafting table', { hardness: 1.5, tool: 'axe', tiles: [TILE.CRAFT_TOP, TILE.PLANKS, TILE.CRAFT_SIDE] });
 def(B.FURNACE, 'furnace', { hardness: 3.0, tool: 'pick', tier: 1, tiles: [TILE.FURNACE_TOP, TILE.FURNACE_TOP, TILE.FURNACE_FRONT] });
+def(B.TALLGRASS, 'tall grass', { solid: false, opaque: false, cross: true, replaceable: true, hardness: 0.05, drops: null, tiles: [TILE.TALLGRASS, TILE.TALLGRASS, TILE.TALLGRASS] });
+def(B.FLOWER_A, 'pink flower', { solid: false, opaque: false, cross: true, replaceable: true, hardness: 0.05, drops: null, tiles: [TILE.FLOWER_A, TILE.FLOWER_A, TILE.FLOWER_A] });
+def(B.FLOWER_B, 'yellow flower', { solid: false, opaque: false, cross: true, replaceable: true, hardness: 0.05, drops: null, tiles: [TILE.FLOWER_B, TILE.FLOWER_B, TILE.FLOWER_B] });
+def(B.BED, 'bed', { hardness: 0.5, tool: 'axe', tiles: [TILE.BED_TOP, TILE.PLANKS, TILE.BED_SIDE] });
 
 export function isOpaque(id) { return BLOCKS[id] ? BLOCKS[id].opaque : false; }
 export function isSolid(id) { return BLOCKS[id] ? BLOCKS[id].solid : false; }

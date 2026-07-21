@@ -144,6 +144,41 @@ function tileFor(block, faceIndex) {
   return t[2];
 }
 
+// Two crossed, double-sided quads forming an X for a plant billboard.
+function emitCross(b, x, y, z, uv, faceSky, faceBlock) {
+  const [u0, v0, u1, v1] = uv;
+  const inset = 0.05;
+  const lo = inset, hi = 1 - inset;
+  // each entry: 4 corners [x,z] pairs at y bottom→top, both diagonals + back faces
+  const quads = [
+    [[lo, lo], [hi, hi]], // diagonal ╱
+    [[hi, lo], [lo, hi]], // diagonal ╲
+  ];
+  for (const [a, c] of quads) {
+    for (let side = 0; side < 2; side++) {
+      const p0 = side ? c : a, p1 = side ? a : c;
+      const base = b.vertCount;
+      // bottom-left, bottom-right, top-left, top-right
+      const verts = [
+        [x + p0[0], y, z + p0[1], u0, v0],
+        [x + p1[0], y, z + p1[1], u1, v0],
+        [x + p0[0], y + 1, z + p0[1], u0, v1],
+        [x + p1[0], y + 1, z + p1[1], u1, v1],
+      ];
+      for (const [vx, vy, vz, vu, vv] of verts) {
+        b.positions.push(vx, vy, vz);
+        b.normals.push(0, 1, 0);
+        b.uvs.push(vu, vv);
+        b.colors.push(0.92, 0.92, 0.92);
+        b.skyLight.push(faceSky);
+        b.blockLight.push(faceBlock);
+      }
+      b.indices.push(base, base + 1, base + 3, base, base + 3, base + 2);
+      b.vertCount += 4;
+    }
+  }
+}
+
 const WATER_UV_SCALE = 0.5; // water texture repeats every 2 blocks, in world space
 
 export function meshChunk(padded, bx = 0, bz = 0) {
@@ -163,6 +198,14 @@ export function meshChunk(padded, bx = 0, bz = 0) {
         const id = at(x, y, z);
         if (id === B.AIR) continue;
         const block = BLOCKS[id];
+
+        // crossed-billboard plants (tall grass, flowers)
+        if (block.cross) {
+          emitCross(solid, x, y, z, uvRect(block.tiles[0]),
+            skyAt(x, y, z), blockAt(x, y, z));
+          continue;
+        }
+
         const isWater = id === B.WATER;
         const surfaceWater = isWater && at(x, y + 1, z) !== B.WATER;
 

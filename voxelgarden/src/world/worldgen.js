@@ -112,6 +112,17 @@ export class WorldGen {
           const n = this.nCave(wx / 48, y / 48, wz / 48);
           if (n > -0.08 && n < 0.08) data[ci + y * 256] = B.AIR;
         }
+
+        // meadow decorations: tall grass + occasional flowers on intact grass
+        if (h > SEA_LEVEL && h < 84 && data[ci + h * 256] === B.GRASS && data[ci + (h + 1) * 256] === B.AIR) {
+          const biome = this.biomeAt(wx, wz, h);
+          if (biome === BIOME.PLAINS || biome === BIOME.FOREST) {
+            const r = this.hash(wx, wz, 0xf10a) % 100;
+            const density = biome === BIOME.PLAINS ? 42 : 26;
+            if (r < density) data[ci + (h + 1) * 256] = B.TALLGRASS;
+            else if (r < density + 4) data[ci + (h + 1) * 256] = r % 2 ? B.FLOWER_A : B.FLOWER_B;
+          }
+        }
       }
     }
 
