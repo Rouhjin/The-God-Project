@@ -6,6 +6,7 @@ export class Controls {
   constructor(domElement) {
     this.dom = domElement;
     this.keys = new Set();       // currently held KeyboardEvent.code values
+    this.pressed = new Set();    // keys pressed since last endFrame() — catches sub-frame taps
     this.yaw = 0;                // radians, 0 = looking toward -z
     this.pitch = 0;
     this.sensitivity = 0.0022;
@@ -39,6 +40,7 @@ export class Controls {
     document.addEventListener('keydown', (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
+      this.pressed.add(e.code);
       if (e.code === 'Space') {
         const now = performance.now();
         if (now - this._lastSpace < 280 && this.onDoubleSpace) this.onDoubleSpace();
@@ -71,6 +73,8 @@ export class Controls {
     if (this.locked) document.exitPointerLock();
   }
   has(code) { return this.enabled && this.keys.has(code); }
+  wasPressed(code) { return this.enabled && this.pressed.has(code); }
+  endFrame() { this.pressed.clear(); }
 
   // apply yaw/pitch to a THREE camera
   applyLook(camera) {

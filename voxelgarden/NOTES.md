@@ -54,3 +54,19 @@ Running log of decisions made during development, newest at the bottom.
 - **Testing:** `scripts/stream-test.mjs` teleports the camera 400 blocks and checks
   load/unload counts and console cleanliness (289 loaded at rest, settles fully,
   no errors).
+
+## Phase 3 — Player
+
+- **Physics:** axis order X → Z → Y per spec, substepped so a fast fall can't tunnel.
+  Horizontal control is exponential-approach (14/s on ground, 4/s airborne) — instant
+  enough to feel snappy, keeps a little air momentum.
+- **Sub-frame key taps:** a keydown+keyup inside one frame (fast tap) was invisible to
+  the per-frame key set, eating jumps. Controls now also records edge-triggered
+  `pressed` keys, cleared at frame end; jump consumes either.
+- **Spawn:** deterministic spiral search for a column with height 36–60 so the player
+  starts on dry land, then a snap-up pass once the chunk is loaded (in case of trees).
+- **No auto-step:** climbing 1-block steps needs a jump (classic behavior).
+- **Hold RMB** re-places every 0.25s; breaking resets progress when the target block
+  changes or the button is released.
+- Phase 3 uses a temporary 9-slot palette (planks/cobble/glass/...) until real
+  inventory arrives in Phase 6; placing is free for now.
