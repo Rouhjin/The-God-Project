@@ -13,7 +13,9 @@ page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) message
 page.on('pageerror', (e) => messages.push(`[pageerror] ${e.message}`));
 
 await page.goto('http://localhost:5173/?seed=meadow1', { waitUntil: 'load' });
-await page.waitForTimeout(4000);
+await page.waitForTimeout(3500);
+await page.evaluate(() => { window.__vg.loadWorld('meadow1'); window.__vg.enterPlaying(); });
+await page.waitForTimeout(3000);
 
 // give logs, open inventory
 await page.evaluate(() => { window.__vg.inventory.add('log', 3); });

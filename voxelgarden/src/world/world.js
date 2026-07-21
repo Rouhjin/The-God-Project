@@ -26,6 +26,8 @@ export class World {
     this.centerCz = null;
     this.onFirstReady = null;    // fired once when the spawn chunk has data
     this.onChunkEdited = null;   // (chunk) -> void, for the save system
+    // edited chunk data snapshots, kept even after unload so saving works
+    this.editedData = new Map(); // "cx,cz" -> Uint8Array (same ref as the live chunk)
 
     this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e) => this.handleMessage(e.data);
@@ -62,6 +64,7 @@ export class World {
     if (c.data[idx] === id) return false;
     c.data[idx] = id;
     c.edited = true;
+    this.editedData.set(chunkKey(cx, cz), c.data);
     if (this.onChunkEdited) this.onChunkEdited(c);
 
     this.worker.postMessage({ type: 'edits', edits: [[cx, cz, idx, id]] });
@@ -195,6 +198,47 @@ export class World {
   }
 
   get loadedCount() { return this.chunks.size; }
+
+  // ---- save/load of edited chunks ----
+  getEditedChunks() {
+    const out = [];
+    for (const [key, data] of this.editedData) {
+      const [cx, cz] = key.split(',').map(Number);
+      out.push({ cx, cz, data });
+    }
+    return out;
+  }
+
+  // Restore saved edits: seed the worker's store so streaming reproduces them,
+  // and keep the arrays so a later save re-emits them.
+  restoreEditedChunks(list) {
+    for (const { cx, cz, data } of list) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      this.editedData.set(chunkKey(cx, cz), arr);
+      // clone for the transfer so our copy survives the postMessage neutering
+      const copy = arr.slice();
+      this.worker.postMessage({ type: 'chunkData', cx, cz, data: copy }, [copy.buffer]);
+    }
+  }
+
+  // Tear down the current world and restart the worker with a new seed.
+  reset(seed) {
+    for (const [, c] of this.chunks) this.disposeChunk(c);
+    this.chunks.clear();
+    this.pending.clear();
+    this.queue = [];
+    this.uploadQueue = [];
+    this.editUploads = [];
+    this.outstanding = 0;
+    this.centerCx = this.centerCz = null;
+    this.editedData.clear();
+    this.seed = seed;
+    this.onFirstReady = null;
+    this.worker.terminate();
+    this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    this.worker.onmessage = (e) => this.handleMessage(e.data);
+    this.worker.postMessage({ type: 'init', seed });
+  }
 
   dispose() {
     for (const [, c] of this.chunks) this.disposeChunk(c);

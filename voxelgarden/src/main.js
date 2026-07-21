@@ -1,5 +1,4 @@
-// Voxelgarden — boot + game loop.
-// Phase 7: mobs, combat, health/damage, death & respawn.
+// Voxelgarden — boot, game loop, and state machine (title / playing / paused / dead).
 import * as THREE from 'three';
 import { buildAtlasCanvas, buildWaterCanvas } from './world/atlas.js';
 import { World, RENDER_DIST } from './world/world.js';
@@ -21,11 +20,14 @@ import { Screens } from './ui/screens.js';
 import { MobManager } from './mobs/spawner.js';
 import { DeathScreen } from './ui/death.js';
 import { Particles } from './env/particles.js';
+import { TitleScreen, PauseMenu, DebugOverlay } from './ui/menus.js';
+import { SaveManager } from './save.js';
+import { CYCLE_SECONDS } from './env/sky.js';
 
 const app = document.getElementById('app');
 const hud = document.getElementById('hud');
 
-// ---- renderer / scene ----
+// ---- renderer / scene (persist across worlds) ----
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -44,7 +46,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ---- materials from the procedural atlas ----
+// ---- procedural textures / materials ----
 const atlasTex = new THREE.CanvasTexture(buildAtlasCanvas());
 atlasTex.magFilter = THREE.NearestFilter;
 atlasTex.minFilter = THREE.NearestFilter;
@@ -58,11 +60,8 @@ waterTex.generateMipmaps = false;
 waterTex.wrapS = waterTex.wrapT = THREE.RepeatWrapping;
 waterTex.colorSpace = THREE.SRGBColorSpace;
 
-// day/night tint is injected as a uniform so glow (lantern) vertices can skip it
 const tintUniform = { value: new THREE.Color(1, 1, 1) };
-const solidMat = new THREE.MeshBasicMaterial({
-  map: atlasTex, vertexColors: true, alphaTest: 0.5,
-});
+const solidMat = new THREE.MeshBasicMaterial({ map: atlasTex, vertexColors: true, alphaTest: 0.5 });
 solidMat.onBeforeCompile = (shader) => {
   shader.uniforms.uTint = tintUniform;
   shader.vertexShader = shader.vertexShader
@@ -77,7 +76,7 @@ const waterMat = new THREE.MeshBasicMaterial({
   depthWrite: false, side: THREE.DoubleSide,
 });
 
-// representative colors per block for break-burst particles
+// representative break-burst colors per block
 const BREAK_COLORS = {
   [B.GRASS]: [[0.42, 0.77, 0.32], [0.34, 0.66, 0.25], [0.66, 0.48, 0.31]],
   [B.DIRT]: [[0.66, 0.48, 0.31], [0.54, 0.38, 0.25]],
@@ -93,30 +92,24 @@ const BREAK_COLORS = {
 const DEFAULT_BREAK = [[0.6, 0.6, 0.6], [0.45, 0.45, 0.45]];
 function breakColors(id) { return BREAK_COLORS[id] || DEFAULT_BREAK; }
 
-// ---- world & player ----
-const seed = new URLSearchParams(location.search).get('seed') || 'voxelgarden';
-const world = new World(scene, solidMat, waterMat, seed);
-const gen = new WorldGen(seed);
-
-// find a dry-land spawn near the origin (deterministic per seed)
-function findSpawn() {
-  for (let r = 0; r <= 40; r++) {
-    for (let a = 0; a < Math.max(1, r * 4); a++) {
-      const ang = (a / Math.max(1, r * 4)) * Math.PI * 2;
-      const x = Math.round(Math.cos(ang) * r * 8), z = Math.round(Math.sin(ang) * r * 8);
-      const h = gen.heightAt(x, z);
-      if (h >= 36 && h <= 60) return new THREE.Vector3(x + 0.5, h + 1.01, z + 0.5);
-    }
-  }
-  return new THREE.Vector3(8.5, gen.heightAt(8, 8) + 1.01, 8.5);
-}
-const player = new Player(world, findSpawn());
-let spawnSettled = false;
-
+// ---- persistent systems ----
 const sky = new Sky(scene);
 const audio = new AudioSys();
 const underwaterFX = new UnderwaterFX(hud);
 const particles = new Particles(scene);
+const saveManager = new SaveManager();
+
+const world = new World(scene, solidMat, waterMat, 'voxelgarden');
+const player = new Player(world, new THREE.Vector3(8, 60, 8));
+const controls = new Controls(renderer.domElement);
+const interact = new Interact(scene, world, player, camera, controls);
+const inventory = new Inventory();
+const furnaces = new Furnaces();
+const { icons, canvases: iconCanvases } = buildIcons(atlasTex);
+const drops = new Drops(scene, world, atlasTex, iconCanvases);
+const hudUI = new Hud(hud, inventory, icons);
+const screens = new Screens(hud, inventory, furnaces, icons, audio, drops);
+const mobs = new MobManager(scene, world);
 
 // red damage flash overlay
 const flashEl = document.createElement('div');
@@ -127,32 +120,188 @@ hud.appendChild(flashEl);
 function damageFlash() {
   flashEl.style.transition = 'none';
   flashEl.style.opacity = '1';
-  requestAnimationFrame(() => {
-    flashEl.style.transition = 'opacity .4s';
-    flashEl.style.opacity = '0';
-  });
+  requestAnimationFrame(() => { flashEl.style.transition = 'opacity .4s'; flashEl.style.opacity = '0'; });
 }
 
-const controls = new Controls(renderer.domElement);
-renderer.domElement.addEventListener('click', () => { controls.lock(); audio.ensure(); });
-const interact = new Interact(scene, world, player, camera, controls);
+// ---- state machine ----
+let state = 'title';            // 'title' | 'playing' | 'paused' | 'dead'
+let currentSeed = 'voxelgarden';
+let gen = new WorldGen(currentSeed);
+let spawnSettled = false;
+let titleAngle = 0;
 
-// ---- items, inventory, crafting, furnace ----
-const inventory = new Inventory();
-const furnaces = new Furnaces();
-const { icons, canvases: iconCanvases } = buildIcons(atlasTex);
-const drops = new Drops(scene, world, atlasTex, iconCanvases);
-const hudUI = new Hud(hud, inventory, icons);
-const screens = new Screens(hud, inventory, furnaces, icons, audio, drops);
-screens.spillAt = () => [player.pos.x, player.pos.y + 0.6, player.pos.z];
-inventory.onChange = () => { hudUI.render(); if (screens.isOpen) screens.render(); };
-screens.onOpenChange = (open) => {
-  controls.enabled = !open;
-  if (open) controls.unlock();
-  else controls.lock();
+function findSpawn(g) {
+  for (let r = 0; r <= 40; r++) {
+    for (let a = 0; a < Math.max(1, r * 4); a++) {
+      const ang = (a / Math.max(1, r * 4)) * Math.PI * 2;
+      const x = Math.round(Math.cos(ang) * r * 8), z = Math.round(Math.sin(ang) * r * 8);
+      const h = g.heightAt(x, z);
+      if (h >= 36 && h <= 60) return new THREE.Vector3(x + 0.5, h + 1.01, z + 0.5);
+    }
+  }
+  return new THREE.Vector3(8.5, g.heightAt(8, 8) + 1.01, 8.5);
+}
+
+// ---- world lifecycle ----
+function loadWorld(seed) {
+  currentSeed = seed;
+  gen = new WorldGen(seed);
+  world.reset(seed);
+  inventory.clear();
+  furnaces.map.clear();
+  drops.clearAll();
+  mobs.clearAll();
+  const spawn = findSpawn(gen);
+  player.pos.copy(spawn);
+  player.spawnPoint.copy(spawn);
+  player.vel.set(0, 0, 0);
+  player.health = 20; player.air = 10; player.dead = false;
+  player.timeSinceDamage = 999; player.creative = false; player.flying = false;
+  player.fallStartY = player.pos.y; // avoid a phantom fall on the first grounded frame
+  spawnSettled = false;
+  sky.time = 0.04 * CYCLE_SECONDS;
+}
+
+function applySave(meta, chunks) {
+  if (chunks && chunks.length) world.restoreEditedChunks(chunks);
+  if (meta) {
+    sky.time = meta.time ?? sky.time;
+    if (meta.player) {
+      const p = meta.player;
+      if (p.pos) player.pos.set(p.pos[0], p.pos[1], p.pos[2]);
+      if (p.spawn) player.spawnPoint.set(p.spawn[0], p.spawn[1], p.spawn[2]);
+      if (p.rot) { controls.yaw = p.rot[0]; controls.pitch = p.rot[1]; }
+      player.health = p.health ?? 20;
+      player.air = p.air ?? 10;
+      player.vel.set(0, 0, 0);
+      player.fallStartY = player.pos.y;
+      player.dead = false;
+      spawnSettled = true; // trust the saved position
+    }
+    if (meta.inventory) inventory.restore(meta.inventory);
+    if (meta.furnaces) furnaces.restore(meta.furnaces);
+    if (meta.drops) drops.restore(meta.drops);
+  }
+  hudUI.render();
+}
+
+function collectSave() {
+  return {
+    meta: {
+      seed: currentSeed,
+      time: sky.time,
+      player: {
+        pos: [player.pos.x, player.pos.y, player.pos.z],
+        rot: [controls.yaw, controls.pitch],
+        spawn: [player.spawnPoint.x, player.spawnPoint.y, player.spawnPoint.z],
+        health: player.health, air: player.air,
+      },
+      inventory: inventory.serialize(),
+      furnaces: furnaces.serialize(),
+      drops: drops.serialize(),
+    },
+    chunks: world.getEditedChunks(),
+  };
+}
+
+async function doSave() {
+  if (state === 'title') return;
+  const { meta, chunks } = collectSave();
+  try { await saveManager.save(meta, chunks); } catch (e) { console.warn('save failed', e); }
+}
+
+// ---- state transitions ----
+function enterPlaying() {
+  state = 'playing';
+  titleScreen.hide();
+  pauseMenu.close();
+  deathScreen.hide();
+  hint.style.display = 'block';
+  controls.enabled = true;
+}
+function enterTitle() {
+  state = 'title';
+  controls.unlock();
+  controls.enabled = false;
+  hint.style.display = 'none';
+  pauseMenu.close();
+  deathScreen.hide();
+  if (screens.isOpen) screens.close();
+  titleScreen.show();
+  updateTitleHasSave();
+}
+function togglePause() {
+  if (state === 'playing') {
+    state = 'paused';
+    controls.unlock();
+    controls.enabled = false;
+    pauseMenu.open();
+  } else if (state === 'paused') {
+    state = 'playing';
+    pauseMenu.close();
+    controls.enabled = true;
+    controls.lock();
+  }
+}
+
+// ---- UI shells ----
+const titleScreen = new TitleScreen(hud, {
+  hasSave: false,
+  onContinue: async () => {
+    const meta = await saveManager.loadMeta();
+    const chunks = await saveManager.loadChunks();
+    audio.ensure();
+    if (meta && meta.seed !== currentSeed) loadWorld(meta.seed);
+    applySave(meta, chunks);
+    enterPlaying();
+    controls.lock();
+  },
+  onNewWorld: async (seed) => {
+    await saveManager.wipe();
+    audio.ensure();
+    loadWorld(seed);
+    enterPlaying();
+    controls.lock();
+  },
+});
+async function updateTitleHasSave() {
+  titleScreen.hasSave = await saveManager.hasSave();
+  if (state === 'title') titleScreen.buildMain();
+}
+
+const pauseMenu = new PauseMenu(hud, {
+  onResume: () => togglePause(),
+  onSaveQuit: async () => { await doSave(); enterTitle(); },
+});
+const debugOverlay = new DebugOverlay(hud);
+const deathScreen = new DeathScreen(hud, () => { player.respawn(); enterPlaying(); controls.lock(); });
+
+// ---- HUD elements ----
+const hint = document.createElement('div');
+hint.style.cssText = `position:absolute;top:calc(50% + 40px);left:50%;transform:translate(-50%,-50%);
+  background:rgba(255,246,229,.92);color:#2e2a26;padding:10px 18px;border-radius:12px;
+  font-size:13px;letter-spacing:.02em;pointer-events:none;text-align:center;display:none;`;
+hint.textContent = 'Click to lock the mouse';
+hud.appendChild(hint);
+
+const crosshair = document.createElement('div');
+crosshair.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:18px;height:18px;pointer-events:none;opacity:.85;mix-blend-mode:difference;display:none;`;
+crosshair.innerHTML = `<div style="position:absolute;left:8px;top:0;width:2px;height:18px;background:#fff"></div>
+  <div style="position:absolute;left:0;top:8px;width:18px;height:2px;background:#fff"></div>`;
+hud.appendChild(crosshair);
+
+// ---- input wiring ----
+renderer.domElement.addEventListener('click', () => {
+  audio.ensure();
+  if (state === 'playing') controls.lock();
+});
+controls.onLockChange = (locked) => {
+  hint.style.display = (state === 'playing' && !locked) ? 'block' : 'none';
+  crosshair.style.display = (state === 'playing' && locked) ? 'block' : 'none';
 };
 
-// what the selected hotbar item can do
+// item/tool interaction hooks
 interact.getPlaceBlock = () => {
   const it = inventory.selectedItem();
   return it && it.kind === 'block' ? it.block : 0;
@@ -164,20 +313,19 @@ interact.speedMultiplier = (blockId) => {
   if (held && held.kind === 'tool' && b.tool && held.tool === b.tool) return held.speed;
   return 1;
 };
-
 interact.onBreak = (x, y, z, id) => {
   audio.breakBlock(blockFamily(BLOCKS[id].name));
   particles.burstBlock(x, y, z, breakColors(id));
   if (id === B.FURNACE) {
     for (const s of furnaces.breakAt(x, y, z)) drops.spawn(x + 0.5, y + 0.3, z + 0.5, s.id, s.count);
   }
-  if (player.creative) return; // creative breaking yields no drops
+  if (player.creative) return;
   const b = BLOCKS[id];
   const itemId = b.drops && ITEMS[b.drops] ? b.drops : null;
   if (!itemId) return;
   if (b.tier > 0) {
     const held = inventory.selectedItem();
-    if (!held || held.tool !== 'pick' || held.tier < b.tier) return; // wrong pick tier: no drop
+    if (!held || held.tool !== 'pick' || held.tier < b.tier) return;
   }
   drops.spawn(x + 0.5, y + 0.25, z + 0.5, itemId);
 };
@@ -192,19 +340,10 @@ interact.onUseBlock = (x, y, z, id) => {
   if (id === B.FURNACE) { screens.open('furnace', [x, y, z]); return true; }
   return false;
 };
+interact.entityAt = (a, b, c, d, e, f) => mobs.anyIntersecting(a, b, c, d, e, f);
 
-// ---- mobs & combat ----
-const mobs = new MobManager(scene, world);
-mobs.onPoof = (x, y, z, kind) => {
-  particles.burstPoof(x, y, z, kind);
-  audio.poof();
-};
-// reject placing a block that would intersect a mob
-interact.entityAt = (minX, minY, minZ, maxX, maxY, maxZ) =>
-  mobs.anyIntersecting(minX, minY, minZ, maxX, maxY, maxZ);
-
-const _atkOrigin = new THREE.Vector3();
 const _atkDir = new THREE.Vector3();
+const _atkOrigin = new THREE.Vector3();
 let attackCooldown = 0;
 interact.onAttack = () => {
   if (attackCooldown > 0 || screens.isOpen) return false;
@@ -221,13 +360,21 @@ interact.onAttack = () => {
   return true;
 };
 
-// ---- player damage plumbing ----
+mobs.onPoof = (x, y, z, kind) => { particles.burstPoof(x, y, z, kind); audio.poof(); };
+
+inventory.onChange = () => { hudUI.render(); if (screens.isOpen) screens.render(); };
+screens.spillAt = () => [player.pos.x, player.pos.y + 0.6, player.pos.z];
+screens.onOpenChange = (open) => {
+  controls.enabled = !open && state === 'playing';
+  if (open) controls.unlock();
+  else if (state === 'playing') controls.lock();
+};
+
 player.onFall = (blocks) => {
-  const halfHearts = Math.floor(blocks) - 3;
-  if (halfHearts > 0) { player.damage(halfHearts); audio.hurt(); }
+  const hh = Math.floor(blocks) - 3;
+  if (hh > 0) { player.damage(hh); audio.hurt(); damageFlash(); }
 };
 player.onDamaged = () => { audio.hurt(); damageFlash(); };
-const deathScreen = new DeathScreen(hud, () => respawn());
 player.onDeath = () => {
   drops.spawnInventory(inventory, player.pos.x, player.pos.y + 0.6, player.pos.z);
   hudUI.render();
@@ -235,14 +382,9 @@ player.onDeath = () => {
   controls.unlock();
   controls.enabled = false;
   if (screens.isOpen) screens.close();
+  state = 'dead';
   deathScreen.show();
 };
-function respawn() {
-  player.respawn();
-  deathScreen.hide();
-  controls.enabled = true;
-  controls.lock();
-}
 
 function selectSlot(i) {
   inventory.selected = i;
@@ -250,59 +392,42 @@ function selectSlot(i) {
   const s = inventory.slots[i];
   if (s) hudUI.showToast(ITEMS[s.id].id);
 }
-
-controls.onKeyPress = (code, e) => {
+controls.onKeyPress = (code) => {
+  if (state !== 'playing' && state !== 'paused') return;
+  if (code === 'Escape') {
+    if (screens.isOpen) screens.close();
+    else togglePause();
+    return;
+  }
+  if (state !== 'playing') return;
   if (code.startsWith('Digit') && !screens.isOpen) {
     const n = Number(code.slice(5));
     if (n >= 1 && n <= 9) selectSlot(n - 1);
   }
-  if (code === 'KeyE') {
-    if (screens.isOpen) screens.close();
-    else screens.open('inventory');
-  }
-  if (code === 'Escape' && screens.isOpen) screens.close();
+  if (code === 'KeyE') { if (screens.isOpen) screens.close(); else screens.open('inventory'); }
+  if (code === 'F3') debugOverlay.toggle();
   if (code === 'F4') {
     player.creative = !player.creative;
     if (!player.creative) player.flying = false;
     hudUI.showToast(player.creative ? 'creative mode' : 'survival mode');
   }
 };
-controls.onDoubleSpace = () => {
-  if (player.creative) { player.flying = !player.flying; player.vel.y = 0; }
-};
+controls.onDoubleSpace = () => { if (player.creative && state === 'playing') { player.flying = !player.flying; player.vel.y = 0; } };
 controls.onWheel = (dy) => {
-  if (screens.isOpen) return;
+  if (state !== 'playing' || screens.isOpen) return;
   selectSlot((inventory.selected + (dy > 0 ? 1 : -1) + 9) % 9);
 };
 
-// ---- HUD ----
-const hint = document.createElement('div');
-hint.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  background:rgba(255,246,229,.92);color:#2e2a26;padding:14px 22px;border-radius:14px;
-  font-size:15px;letter-spacing:.02em;pointer-events:none;text-align:center;line-height:1.5;`;
-hint.innerHTML = 'Click to play<br><span style="font-size:12px">WASD move · Space jump · LMB break · RMB place · E inventory · 1-9/wheel hotbar</span>';
-hud.appendChild(hint);
-controls.onLockChange = (locked) => { hint.style.display = locked ? 'none' : 'block'; };
-
-const crosshair = document.createElement('div');
-crosshair.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  width:18px;height:18px;pointer-events:none;opacity:.85;mix-blend-mode:difference;`;
-crosshair.innerHTML = `<div style="position:absolute;left:8px;top:0;width:2px;height:18px;background:#fff"></div>
-  <div style="position:absolute;left:0;top:8px;width:18px;height:2px;background:#fff"></div>`;
-hud.appendChild(crosshair);
-
-const stats = document.createElement('div');
-stats.style.cssText = `position:absolute;top:8px;left:8px;background:rgba(46,42,38,.6);
-  color:#fff6e5;padding:6px 10px;border-radius:8px;font-size:12px;font-family:monospace;`;
-hud.appendChild(stats);
-
+// ---- autosave ----
+setInterval(() => { if (state === 'playing' || state === 'paused') doSave(); }, 20000);
+document.addEventListener('visibilitychange', () => { if (document.hidden) doSave(); });
+window.addEventListener('beforeunload', () => { if (state !== 'title') doSave(); });
 
 // ---- loop ----
 let last = performance.now();
 let frames = 0, fpsTime = 0, fps = 0;
 let wasUnderwater = false, wasInWater = false, stepAcc = 0;
-
-const perf = { player: 0, interact: 0, world: 0, sky: 0, render: 0, other: 0, frames: 0 };
+const perf = { player: 0, interact: 0, world: 0, sky: 0, render: 0, frames: 0 };
 window.__perf = perf;
 function mark() { return performance.now(); }
 
@@ -310,43 +435,54 @@ function tick(now) {
   requestAnimationFrame(tick);
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
-
   frames++; fpsTime += dt;
   if (fpsTime >= 0.5) { fps = Math.round(frames / fpsTime); frames = 0; fpsTime = 0; }
   const t0 = mark();
 
-  // settle spawn once terrain exists (avoid spawning inside a tree or hill lip)
-  if (!spawnSettled && world.isChunkReady(Math.floor(player.pos.x), Math.floor(player.pos.z))) {
-    const bx = Math.floor(player.pos.x), bz = Math.floor(player.pos.z);
-    let y = Math.floor(player.pos.y);
-    while (y < 94 && (isSolid(world.getBlock(bx, y, bz)) || isSolid(world.getBlock(bx, y + 1, bz)))) y++;
-    player.pos.y = y + 0.01;
-    player.spawnPoint.copy(player.pos);
-    spawnSettled = true;
-  }
+  const simulate = state === 'playing' || state === 'dead';
 
-  player.update(dt, controls);
+  if (simulate) {
+    if (!spawnSettled && world.isChunkReady(Math.floor(player.pos.x), Math.floor(player.pos.z))) {
+      const bx = Math.floor(player.pos.x), bz = Math.floor(player.pos.z);
+      let y = Math.floor(player.pos.y);
+      while (y < 94 && (isSolid(world.getBlock(bx, y, bz)) || isSolid(world.getBlock(bx, y + 1, bz)))) y++;
+      player.pos.y = y + 0.01;
+      player.fallStartY = player.pos.y;
+      if (player.spawnPoint.y < 1) player.spawnPoint.copy(player.pos);
+      spawnSettled = true;
+    }
+    player.update(dt, controls);
+    attackCooldown = Math.max(0, attackCooldown - dt);
+    player.updateVitals(dt);
+  }
   const t1 = mark(); perf.player += t1 - t0;
 
-  // camera follows the player's eye; sprint eases FOV out
-  player.eyePosition(camera.position);
-  controls.applyLook(camera);
-  const targetFov = player.sprinting ? 78 : 75;
-  camera.fov += (targetFov - camera.fov) * Math.min(1, 8 * dt);
-  camera.updateProjectionMatrix();
+  if (state === 'title') {
+    // slow orbit over the spawn area for the live backdrop
+    titleAngle += dt * 0.06;
+    const cx = player.spawnPoint.x, cz = player.spawnPoint.z, cy = player.spawnPoint.y;
+    camera.position.set(cx + Math.cos(titleAngle) * 26, cy + 16, cz + Math.sin(titleAngle) * 26);
+    camera.lookAt(cx, cy + 2, cz);
+  } else {
+    player.eyePosition(camera.position);
+    controls.applyLook(camera);
+    const targetFov = player.sprinting ? 78 : 75;
+    camera.fov += (targetFov - camera.fov) * Math.min(1, 8 * dt);
+    camera.updateProjectionMatrix();
+  }
 
-  attackCooldown = Math.max(0, attackCooldown - dt);
-  player.updateVitals(dt);
-
-  interact.update(dt);
+  if (simulate) interact.update(dt);
+  else { interact.highlight.visible = false; interact.crackMesh.visible = false; }
   const t2 = mark(); perf.interact += t2 - t1;
-  world.update(player.pos.x, player.pos.z);
-  drops.update(dt, player, inventory, () => audio.pickup());
-  furnaces.update(dt, () => audio.smeltPop());
-  mobs.update(dt, {
-    player, sky, tint: sky.tint,
-    damagePlayer: (amt, dir) => player.damage(amt, dir),
-  });
+
+  world.update(state === 'title' ? player.spawnPoint.x : player.pos.x,
+               state === 'title' ? player.spawnPoint.z : player.pos.z);
+
+  if (simulate) {
+    drops.update(dt, player, inventory, () => audio.pickup());
+    furnaces.update(dt, () => audio.smeltPop());
+    mobs.update(dt, { player, sky, tint: sky.tint, damagePlayer: (a, d) => player.damage(a, d) });
+  }
   particles.update(dt);
   screens.update(dt);
   hudUI.updateVitals(player);
@@ -356,28 +492,28 @@ function tick(now) {
   sky.update(dt, camera.position, scene.fog);
   tintUniform.value.copy(sky.tint);
   waterMat.color.copy(sky.tint);
-  underwaterFX.update(player.headInWater, scene.fog, viewEdge);
-  if (player.headInWater !== wasUnderwater) {
-    audio.setUnderwater(player.headInWater);
-    wasUnderwater = player.headInWater;
-  }
-  if (player.inWater && !wasInWater && player.vel.y < -3) {
-    audio.splash();
-    particles.splash(player.pos.x, Math.floor(player.pos.y) + 1, player.pos.z);
-  }
-  wasInWater = player.inWater;
-  audio.update(dt, { nightness: sky.nightness, underwater: player.headInWater });
-
-  // footsteps timed to movement
-  const hSpeed = Math.hypot(player.vel.x, player.vel.z);
-  if (player.onGround && hSpeed > 0.8) {
-    stepAcc += hSpeed * dt;
-    if (stepAcc > 2.2) {
-      stepAcc = 0;
-      const under = world.getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y - 0.3), Math.floor(player.pos.z));
-      if (under) audio.footstep(blockFamily(BLOCKS[under].name));
+  underwaterFX.update(simulate && player.headInWater, scene.fog, viewEdge);
+  if (simulate) {
+    if (player.headInWater !== wasUnderwater) { audio.setUnderwater(player.headInWater); wasUnderwater = player.headInWater; }
+    if (player.inWater && !wasInWater && player.vel.y < -3) {
+      audio.splash();
+      particles.splash(player.pos.x, Math.floor(player.pos.y) + 1, player.pos.z);
     }
-  } else stepAcc = 0;
+    wasInWater = player.inWater;
+    audio.update(dt, { nightness: sky.nightness, underwater: player.headInWater });
+
+    const hSpeed = Math.hypot(player.vel.x, player.vel.z);
+    if (player.onGround && hSpeed > 0.8) {
+      stepAcc += hSpeed * dt;
+      if (stepAcc > 2.2) {
+        stepAcc = 0;
+        const under = world.getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y - 0.3), Math.floor(player.pos.z));
+        if (under) audio.footstep(blockFamily(BLOCKS[under].name));
+      }
+    } else stepAcc = 0;
+  } else {
+    audio.update(dt, { nightness: sky.nightness, underwater: false });
+  }
 
   waterTex.offset.x = (now / 1000) * 0.03;
   waterTex.offset.y = (now / 1000) * 0.011;
@@ -387,10 +523,36 @@ function tick(now) {
   renderer.render(scene, camera);
   perf.render += mark() - t4;
   perf.frames++;
-  const p = player.pos;
-  stats.textContent = `${fps} fps · ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)} · chunk ${Math.floor(p.x) >> 4},${Math.floor(p.z) >> 4} · loaded ${world.loadedCount} · draws ${renderer.info.render.calls}${player.onGround ? ' · ground' : ''}${player.inWater ? ' · water' : ''}`;
+
+  if (debugOverlay.visible) {
+    const p = player.pos;
+    debugOverlay.set(
+      `Voxelgarden  ${fps} fps\n` +
+      `xyz  ${p.x.toFixed(1)} ${p.y.toFixed(1)} ${p.z.toFixed(1)}\n` +
+      `chunk  ${Math.floor(p.x) >> 4}, ${Math.floor(p.z) >> 4}\n` +
+      `loaded  ${world.loadedCount} chunks\n` +
+      `draws  ${renderer.info.render.calls}   tris ${renderer.info.render.triangles}\n` +
+      `mobs  ${mobs.mobs.length}   drops ${drops.list.length}\n` +
+      `time  ${(sky.t * 24).toFixed(1)}h   ${sky.isNight ? 'night' : 'day'}   hp ${player.health}/20`);
+  }
 }
 requestAnimationFrame(tick);
 
+// ---- boot: pick the backdrop seed, then show the title ----
+(async () => {
+  const meta = await saveManager.loadMeta();
+  const seed = meta?.seed || 'voxelgarden';
+  loadWorld(seed);
+  if (meta && meta.player && meta.player.spawn) {
+    player.spawnPoint.set(meta.player.spawn[0], meta.player.spawn[1], meta.player.spawn[2]);
+  }
+  enterTitle();
+})();
+
 // debug/testing handle
-window.__vg = { camera, world, controls, player, interact, sky, audio, renderer, tintUniform, solidMat, inventory, drops, furnaces, screens, mobs, particles };
+window.__vg = {
+  camera, world, controls, player, interact, sky, audio, renderer, tintUniform, solidMat,
+  inventory, drops, furnaces, screens, mobs, particles, saveManager,
+  get state() { return state; },
+  enterPlaying, loadWorld, applySave, collectSave, doSave,
+};

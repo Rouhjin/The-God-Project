@@ -88,6 +88,11 @@ export class Drops {
     if (i >= 0) this.list.splice(i, 1);
   }
 
+  clearAll() {
+    for (const d of this.list) this.scene.remove(d.mesh);
+    this.list.length = 0;
+  }
+
   update(dt, player, inventory, onPickup) {
     this.mergeTimer -= dt;
     const doMerge = this.mergeTimer <= 0;

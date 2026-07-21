@@ -88,4 +88,9 @@ export class MobManager {
   anyIntersecting(minX, minY, minZ, maxX, maxY, maxZ) {
     return this.mobs.some((m) => !m.dead && m.aabbIntersects(minX, minY, minZ, maxX, maxY, maxZ));
   }
+
+  clearAll() {
+    for (const m of this.mobs) m.remove();
+    this.mobs.length = 0;
+  }
 }

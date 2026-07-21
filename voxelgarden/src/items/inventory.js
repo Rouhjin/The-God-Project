@@ -95,6 +95,13 @@ export class Inventory {
     this.changed();
   }
 
+  clear() {
+    this.slots.fill(null);
+    this.cursor = null;
+    this.selected = 0;
+    this.changed();
+  }
+
   serialize() {
     return { slots: this.slots, selected: this.selected };
   }

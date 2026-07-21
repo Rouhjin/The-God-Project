@@ -152,3 +152,29 @@ Running log of decisions made during development, newest at the bottom.
 - **Test-harness gotcha (not a game bug):** the camera yaw convention is
   `fwd = (-sin yaw, ·, -cos yaw)`, so `yaw = atan2(-dx, -dz)` to aim at a point — my
   first screenshot attempts pointed 180° away. Documented so future shots aim right.
+
+## Phase 8 — Persistence & polish
+
+- **State machine** (`title / playing / paused / dead`): the loop always renders; the
+  title state runs a slow camera orbit over the spawn area as a live backdrop, and
+  simulation (player/mobs/drops/furnaces) only runs while playing or dead.
+- **World reuse:** rather than tearing down and rebuilding every per-world object on
+  New World / Continue, all systems persist and expose `reset`/`clear` — the World just
+  terminates and restarts its worker with the new seed.
+- **Save format (IndexedDB):** `meta` store holds seed, time, player (pos/rot/spawn/
+  health/air), inventory, furnace states, and dropped items; `chunks` store holds only
+  edited chunks as raw Uint8Arrays. Loading regenerates from the seed then overlays
+  saved chunks via a `chunkData` worker message. Autosave every 20s + on
+  visibilitychange/beforeunload.
+- **Bug fixed by the save round-trip test:** on Continue, the player instantly died.
+  `fallStartY` (from the module-load spawn at y=60) was never reset when the world
+  reloaded, so the first grounded frame registered a phantom 22-block fall (~19 dmg) and
+  death dropped the whole inventory. Now every teleport (loadWorld/applySave/spawn-
+  settle/respawn) resets `fallStartY`.
+- **F3 debug overlay:** fps, xyz, chunk, loaded count, draws + triangles, mob/drop
+  counts, time-of-day, hp. Vignette is the CSS radial in index.html.
+- Particles and icon rendering already landed in Phases 6-7; this phase adds the menus,
+  save system, and the debug overlay.
+- **Test note:** the earlier items/mobs test scripts now call
+  `__vg.loadWorld(seed); __vg.enterPlaying()` after load since the game boots to the
+  title screen instead of straight into play.
